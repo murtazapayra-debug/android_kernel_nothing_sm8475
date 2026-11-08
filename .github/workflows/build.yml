@@ -57,21 +57,28 @@ jobs:
           echo "$HOME/llvm/bin" >> "$GITHUB_PATH"
           echo "/home/arter97/android/nathan/llvm-22.1.0-x86_64/bin" >> "$GITHUB_PATH"
 
-      - name: Integrate pinned BakaSU source
+- name: Integrate pinned BakaSU source
         run: |
-          # Clone and pin without relying on setup.sh git clone -b SHA limitation
+          # 1. Clone BakaSU to repository root and checkout pinned commit
           git clone https://github.com/Baka-SU/BakaSU.git KernelSU
           cd KernelSU
           git checkout 516d3e87fbc986ccefdde2c2765f1700612441a9
           cd ..
 
-          # Add Makefile and Kconfig entries
-          if ! grep -q "KernelSU" drivers/Makefile; then
-            echo 'obj-y += KernelSU/' >> drivers/Makefile
+          # 2. Symlink KernelSU/kernel into drivers directory
+          # Both names are linked so both "kernelsu" and "KernelSU" paths resolve
+          ln -sfn ../KernelSU/kernel drivers/kernelsu
+          ln -sfn ../KernelSU/kernel drivers/KernelSU
+
+          # 3. Hook into drivers/Makefile
+          if ! grep -q "kernelsu" drivers/Makefile; then
+            echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           fi
-          if ! grep -q "KernelSU" drivers/Kconfig; then
-            sed -i '/endmenu/i source "drivers/KernelSU/Kconfig"' drivers/Kconfig
-          fi
+
+          # 4. Hook into drivers/Kconfig right before the final endmenu ($i)
+          if ! grep -q "kernelsu/Kconfig" drivers/Kconfig; then
+            sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          fi 
 
       - name: Adapt BakaSU SELinux helpers to vendor 5.10
         run: |
