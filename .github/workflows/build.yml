@@ -1,0 +1,110 @@
+name: Build Nothing Phone (2) Kernel with BakaSU
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Muru Kernel with BakaSU
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
+            git gnupg gperf libncurses5 libncurses5-dev libssl-dev libxml2 \
+            libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc \
+            zip zlib1g-dev python3 libelf-dev llvm lld
+
+      - name: Download Clang Toolchain
+        run: |
+          mkdir -p clang
+          git clone --depth=1 https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r487747c.git clang
+
+      - name: Integrate BakaSU
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/BakaSU/KernelSU/main/kernel/setup.sh" | bash -
+
+      - name: Configure Defconfig
+        run: |
+          # Detect available configuration file
+          if [ -f arch/arm64/configs/vendor/cape_defconfig ]; then
+            TARGET_CONFIG="vendor/cape_defconfig"
+          elif [ -f arch/arm64/configs/vendor/taro_defconfig ]; then
+            TARGET_CONFIG="vendor/taro_defconfig"
+          else
+            TARGET_CONFIG="defconfig"
+          fi
+
+          echo "Target config selected: $TARGET_CONFIG"
+          cp "arch/arm64/configs/$TARGET_CONFIG" arch/arm64/configs/custom_defconfig
+
+          # Inject BakaSU driver configurations
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/custom_defconfig
+          echo "CONFIG_KSU_DEBUG=n" >> arch/arm64/configs/custom_defconfig
+
+      - name: Compile Kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=arm64
+
+          make O=out custom_defconfig \
+            CC=clang \
+            LLVM=1 \
+            LLVM_IAS=1
+
+          make -j$(nproc --all) O=out \
+            CC=clang \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+      - name: Package with AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
+
+          # Set AnyKernel3 device flags for Nothing Phone (2) codename "Pong"
+          sed -i 's/device.name1=.*/device.name1=Pong/g' anykernel/anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=pong/g' anykernel/anykernel.sh
+          sed -i 's/is_slot_device=0/is_slot_device=auto/g' anykernel/anykernel.sh
+
+          # Move compiled kernel image
+          if [ -f out/arch/arm64/boot/Image.gz ]; then
+            cp out/arch/arm64/boot/Image.gz anykernel/
+          elif [ -f out/arch/arm64/boot/Image ]; then
+            cp out/arch/arm64/boot/Image anykernel/
+          else
+            echo "Error: Kernel image not found in out/arch/arm64/boot/"
+            exit 1
+          fi
+
+          cd anykernel
+          zip -r9 ../NothingPhone2-BakaSU-Kernel.zip * -x .git* README.md *placeholder
+
+      - name: Upload Flashable Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: NothingPhone2-BakaSU-Kernel
+          path: NothingPhone2-BakaSU-Kernel.zip
+          retention-days: 7
