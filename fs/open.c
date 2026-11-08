@@ -30,6 +30,11 @@
 #include <linux/falloc.h>
 #include <linux/fs_struct.h>
 #include <linux/ima.h>
+
+#ifdef CONFIG_KSU_MANUAL_HOOK
+extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
+                                int *mode, int *__unused_flags);
+#endif
 #include <linux/dnotify.h>
 #include <linux/compat.h>
 
@@ -469,6 +474,9 @@ out:
 
 SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
 {
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
+#endif
 	return do_faccessat(dfd, filename, mode, 0);
 }
 
