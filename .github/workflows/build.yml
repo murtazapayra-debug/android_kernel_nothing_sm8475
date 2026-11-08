@@ -49,6 +49,7 @@ jobs:
           curl -fL https://www.kernel.org/pub/tools/llvm/files/llvm-22.1.0-x86_64.tar.gz -o llvm.tar.gz
           tar -xzf llvm.tar.gz -C "$HOME/llvm" --strip-components=1
           echo "$HOME/llvm/bin" >> "$GITHUB_PATH"
+          echo "LLVM_PATH=$HOME/llvm/bin/" >> "$GITHUB_ENV"
           rm llvm.tar.gz
 
       - name: Integrate pinned BakaSU source
@@ -65,6 +66,13 @@ jobs:
           CONFIG_KSU=y
           CONFIG_KSU_MANUAL_HOOK=y
           EOF
+
+      - name: Verify LLVM toolchain
+        run: |
+          test -x "$HOME/llvm/bin/clang"
+          command -v clang
+          clang --version | head -n 1
+          echo "LLVM_PATH=$LLVM_PATH"
 
       - name: Configure and verify BakaSU
         env:
