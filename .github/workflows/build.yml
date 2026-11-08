@@ -100,6 +100,22 @@ jobs:
           print("Applied vendor 5.10 SELinux helper compatibility fixes")
           PY
 
+      - name: Fix BakaSU SELinux AVC reset for selinux_policy layout
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          rules = Path("KernelSU/kernel/selinux/rules.c")
+          source = rules.read_text()
+          old = "#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))"
+          new = "#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0) || defined(SELINUX_POLICY_INSTEAD_SELINUX_SS))"
+          count = source.count(old)
+          if count != 2:
+              raise SystemExit(f"Expected 2 BakaSU AVC reset guards, found {count}")
+          rules.write_text(source.replace(old, new))
+          print("Selected the SELINUX_POLICY_INSTEAD_SELINUX_SS AVC reset API")
+          PY
+
       - name: Fix BakaSU disabled-preinit stub for void manual hook
         run: |
           python3 - <<'PY'
