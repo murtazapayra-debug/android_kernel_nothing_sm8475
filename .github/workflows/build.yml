@@ -1,164 +1,4 @@
-name: Build arter97 Nothing Phone 2 Kernel with BakaSU
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - bakasu-integration
-
-permissions:
-  contents: read
-
-jobs:
-  build:
-    name: Build Pong kernel with BakaSU manual hooks
-    runs-on: ubuntu-22.04
-    timeout-minutes: 180
-
-    steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
-      - name: Checkout kernel source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref }}
-          submodules: recursive
-          fetch-depth: 1
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            bc bison build-essential ccache curl flex git gnupg gperf \
-            libncurses5-dev libssl-dev libxml2 libxml2-utils lzop rsync \
-            schedtool squashfs-tools xsltproc zip zlib1g-dev python3 \
-            libelf-dev lz4 cpio fakeroot dwarves p7zip-full
-
-      - name: Install LLVM 22.1.0
-        run: |
-          mkdir -p "$HOME/llvm"
-          curl -fL https://www.kernel.org/pub/tools/llvm/files/llvm-22.1.0-x86_64.tar.gz -o llvm.tar.gz
-          tar -xzf llvm.tar.gz -C "$HOME/llvm" --strip-components=1
-          echo "$HOME/llvm/bin" >> "$GITHUB_PATH"
-          echo "LLVM_PATH=$HOME/llvm/bin/" >> "$GITHUB_ENV"
-          rm llvm.tar.gz
-
-      - name: Integrate pinned BakaSU source
-        run: |
-          curl -fLSs https://raw.githubusercontent.com/Baka-SU/BakaSU/516d3e87fbc986ccefdde2c2765f1700612441a9/kernel/setup.sh -o setup-bakasu.sh
-          bash setup-bakasu.sh 516d3e87fbc986ccefdde2c2765f1700612441a9
-
-      - name: Adapt BakaSU SELinux helpers to this vendor 5.10 tree
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          source_path = Path("KernelSU/kernel/feature/selinux_hide.c")
-          source = source_path.read_text()
-
-          # This NothingOS 5.10 tree has selinux_state, but its avc/security
-          # helper prototypes are the legacy no-state variants. BakaSU's
-          # version-based compatibility macro incorrectly prepends
-          # &selinux_state for these two calls.
-          source, avc_count = re.subn(
-              r"^#define ksu_avc_has_perm_compat\(\.\.\.\) avc_has_perm\(&selinux_state, __VA_ARGS__\)$",
-              "#define ksu_avc_has_perm_compat(...) avc_has_perm(__VA_ARGS__)",
-              source,
-              flags=re.MULTILINE,
-          )
-          source, transition_count = re.subn(
-              r"^#define ksu_security_bounded_transition_compat\(\.\.\.\) security_bounded_transition\(&selinux_state, __VA_ARGS__\)$",
-              "#define ksu_security_bounded_transition_compat(...) security_bounded_transition(__VA_ARGS__)",
-              source,
-              flags=re.MULTILINE,
-          )
-
-          # This kernel's sidtab cache API has a fifth 'alloc' parameter.
-          source, sidtab_count = re.subn(
-              r"sidtab_sid2str_get\(sidtab, entry, scontext, scontext_len\)",
-              "sidtab_sid2str_get(sidtab, entry, scontext, scontext_len, true)",
-              source,
-          )
-
-          if (avc_count != 1 or transition_count != 1 or sidtab_count != 1):
-              raise SystemExit(
-                  "BakaSU SELinux compatibility patch did not match expected source "
-                  f"(avc={avc_count}, transition={transition_count}, sidtab={sidtab_count})"
-              )
-
-          source_path.write_text(source)
-          print("Applied vendor 5.10 SELinux helper compatibility fixes")
-          PY
-
-      - name: Fix BakaSU SELinux AVC reset for selinux_policy layout
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          rules = Path("KernelSU/kernel/selinux/rules.c")
-          source = rules.read_text()
-          old = "#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))"
-          new = "#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0) || defined(SELINUX_POLICY_INSTEAD_SELINUX_SS))"
-          count = source.count(old)
-          if count != 2:
-              raise SystemExit(f"Expected 2 BakaSU AVC reset guards, found {count}")
-          rules.write_text(source.replace(old, new))
-          print("Selected the SELINUX_POLICY_INSTEAD_SELINUX_SS AVC reset API")
-          PY
-
-      - name: Fix BakaSU disabled-preinit stub for void manual hook
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          header = Path("KernelSU/kernel/preinit/preinit.h")
-          source = header.read_text()
-          old = """static inline void ksu_preinit_handle_execve_manual(const char **filename, struct user_arg_ptr *argv)
-          {
-              return false;
-          }"""
-          new = """static inline void ksu_preinit_handle_execve_manual(const char **filename, struct user_arg_ptr *argv)
-          {
-              return;
-          }"""
-          if source.count(old) != 1:
-              raise SystemExit("Expected BakaSU manual-preinit stub was not found exactly once")
-          header.write_text(source.replace(old, new))
-          print("Fixed disabled-preinit void stub")
-          PY
-
-      - name: Prepare Pong defconfig
-        run: |
-          cp defconfig arch/arm64/configs/custom_defconfig
-
-          # Resolve the source version from the repository root. Do not embed
-          # $(cat version) in CONFIG_LOCALVERSION: with O=out, Kbuild evaluates
-          # that command from the output directory, where the file is absent.
-          KERNEL_VERSION="$(tr -d '\r\n' < version)"
-          test -n "$KERNEL_VERSION"
-          sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"-arter97-$KERNEL_VERSION\"|" arch/arm64/configs/custom_defconfig
-          cat >> arch/arm64/configs/custom_defconfig <<'EOF'
-
-          # BakaSU
-          CONFIG_KSU=y
-          CONFIG_KSU_MANUAL_HOOK=y
-          EOF
-
-      - name: Verify LLVM toolchain
-        run: |
-          test -x "$HOME/llvm/bin/clang"
-          command -v clang
-          clang --version | head -n 1
+clang --version | head -n 1
           echo "LLVM_PATH=$LLVM_PATH"
 
       - name: Configure and verify BakaSU
@@ -231,21 +71,17 @@ jobs:
             *) echo "Unsupported stock boot header version: $HEADER_VERSION"; exit 1 ;;
           esac
 
-          # The stock GKI boot signature is for VTS certification,
-# not device-specific bootloader verification.
-# A modified kernel cannot retain the original signature.
-if [ "$HEADER_VERSION" = "4" ]; then
-  SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+          # The v4 GKI boot signature is checked by VTS, not by the device
+          # bootloader's device-specific AVB chain. The changed kernel cannot
+          # retain the stock signature, so mkbootimg will emit a zero-size one.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+            echo "Stock GKI boot signature: ${SIGNATURE_SIZE} bytes"
+            echo "Repacking without the stale GKI signature."
+          fi
 
-  echo "Stock GKI boot signature: ${SIGNATURE_SIZE} bytes"
-  echo "The modified test image will be packaged without the stale GKI signature."
-fi
-
-          # Replace only the boot partition's kernel payload. Keep the original
-          # stock ramdisk and all metadata extracted from this exact release.
-          cp out/arch/arm64/boot/Image.gz "$WORKDIR/stock-unpacked/kernel"
-          # Generate the mkbootimg argument list into a second directory
-          # so the first extraction (and its original ramdisk) stays intact.
+          # Keep the original extraction for independent ramdisk comparison.
+          # Generate mkbootimg arguments and extracted inputs in a separate dir.
           python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
             --boot_img "$STOCK_BOOT" \
             --out "$WORKDIR/mkbootimg-inputs" \
@@ -266,12 +102,11 @@ fi
 
           cmp out/arch/arm64/boot/Image.gz "$WORKDIR/repacked-unpacked/kernel"
           # Verify that the output does not contain a stale GKI signature.
-if [ "$HEADER_VERSION" = "4" ]; then
-  OUTPUT_SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/repacked-boot-info.txt")"
-
-  test "$OUTPUT_SIGNATURE_SIZE" = "0"
-  echo "Verified: output boot signature size is 0."
-fi
+          if [ "$HEADER_VERSION" = "4" ]; then
+            OUTPUT_SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/repacked-boot-info.txt")"
+            test "$OUTPUT_SIGNATURE_SIZE" = "0"
+            echo "Verified: output boot signature size is 0."
+          fi
           cmp "$WORKDIR/stock-unpacked/ramdisk" "$WORKDIR/repacked-unpacked/ramdisk"
 
           for field in "os version" "os patch level" "boot image header version" "command line args"; do
@@ -291,7 +126,3 @@ fi
           name: Pong-BakaSU-B4.1-260818-1726-TEST-ONLY
           path: |
             boot-bakasu-pong-b4.1-260818-1726.img
-            boot-bakasu-pong-b4.1-260818-1726.img.sha256
-            out/arch/arm64/boot/Image.gz
-            out/.config
-          retention-days: 7
