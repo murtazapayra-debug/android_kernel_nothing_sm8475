@@ -1,20 +1,22 @@
-name: Build arter97 Kernel with BakaSU
+name: Build arter97 Nothing Phone 2 Kernel with BakaSU
 
 on:
   workflow_dispatch:
-    inputs:
-      branch:
-        description: "Branch to build"
-        required: true
-        default: "master"
+  push:
+    branches:
+      - bakasu-integration
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    name: Compile Nothing Phone (2) Kernel
+    name: Build Pong kernel with BakaSU
     runs-on: ubuntu-22.04
+    timeout-minutes: 180
 
     steps:
-      - name: Free Disk Space
+      - name: Free disk space
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: false
@@ -25,114 +27,168 @@ jobs:
           docker-images: true
           swap-storage: true
 
-      - name: Checkout Kernel Source
+      - name: Checkout kernel source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.branch || 'master' }}
+          ref: ${{ github.ref }}
           submodules: recursive
           fetch-depth: 1
 
-      - name: Install System Dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
-            git gnupg gperf libncurses5 libncurses5-dev libssl-dev libxml2 \
-            libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc \
-            zip zlib1g-dev python3 libelf-dev llvm lld lz4 cpio \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+            bc bison build-essential ccache curl flex git gnupg gperf \
+            libncurses5-dev libssl-dev libxml2 libxml2-utils lzop rsync \
+            schedtool squashfs-tools xsltproc zip zlib1g-dev python3 \
+            libelf-dev lz4 cpio fakeroot dwarves p7zip-full
 
-      - name: Setup Nathan's Slim LLVM 22.1.0 Toolchain
+      - name: Install LLVM 22.1.0 & Fix Hardcoded Paths
         run: |
-          # Create arter97's hardcoded directory structure
-          sudo mkdir -p /home/arter97/android/nathan/llvm-22.1.0-x86_64
-          sudo chown -R $USER:$USER /home/arter97
+          mkdir -p "$HOME/llvm"
+          curl -fL https://www.kernel.org/pub/tools/llvm/files/llvm-22.1.0-x86_64.tar.gz -o llvm.tar.gz
+          tar -xzf llvm.tar.gz -C "$HOME/llvm" --strip-components=1
+          rm llvm.tar.gz
 
-          # Fetch Nathan Chancellor's official Slim LLVM build from kernel.org
-          curl -fLSs https://www.kernel.org/pub/tools/llvm/files/llvm-22.1.0-x86_64.tar.gz -o llvm.tar.gz
-          
-          # Extract toolchain into arter97's expected path
-          mkdir -p /tmp/llvm_unpack
-          tar -C /tmp/llvm_unpack -xzf llvm.tar.gz
+          # Satisfy arter97's hardcoded Makefile paths
+          sudo mkdir -p /home/arter97/android/nathan
+          sudo ln -sf "$HOME/llvm" /home/arter97/android/nathan/llvm-22.1.0-x86_64
 
-          if [ -d "/tmp/llvm_unpack/llvm-22.1.0-x86_64/bin" ]; then
-            cp -r /tmp/llvm_unpack/llvm-22.1.0-x86_64/* /home/arter97/android/nathan/llvm-22.1.0-x86_64/
-          else
-            cp -r /tmp/llvm_unpack/* /home/arter97/android/nathan/llvm-22.1.0-x86_64/
+          echo "$HOME/llvm/bin" >> "$GITHUB_PATH"
+          echo "/home/arter97/android/nathan/llvm-22.1.0-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Integrate pinned BakaSU source
+        run: |
+          # Clone and pin without relying on setup.sh git clone -b SHA limitation
+          git clone https://github.com/Baka-SU/BakaSU.git KernelSU
+          cd KernelSU
+          git checkout 516d3e87fbc986ccefdde2c2765f1700612441a9
+          cd ..
+
+          # Add Makefile and Kconfig entries
+          if ! grep -q "KernelSU" drivers/Makefile; then
+            echo 'obj-y += KernelSU/' >> drivers/Makefile
+          fi
+          if ! grep -q "KernelSU" drivers/Kconfig; then
+            sed -i '/endmenu/i source "drivers/KernelSU/Kconfig"' drivers/Kconfig
           fi
 
-          rm -rf /tmp/llvm_unpack llvm.tar.gz
-          sudo chmod -R 755 /home/arter97
-
-          # Export toolchain to runner environment PATH
-          echo "/home/arter97/android/nathan/llvm-22.1.0-x86_64/bin" >> $GITHUB_PATH
-
-      - name: Integrate BakaSU
+      - name: Adapt BakaSU SELinux helpers to vendor 5.10
         run: |
-          curl -fLSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash -
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
 
-      - name: Prepare Kernel Config
+          source_path = Path("KernelSU/kernel/feature/selinux_hide.c")
+          if source_path.exists():
+              source = source_path.read_text()
+              source, avc_count = re.subn(
+                  r"^#define ksu_avc_has_perm_compat\(\.\.\.\) avc_has_perm\(&selinux_state, __VA_ARGS__\)$",
+                  "#define ksu_avc_has_perm_compat(...) avc_has_perm(__VA_ARGS__)",
+                  source,
+                  flags=re.MULTILINE,
+              )
+              source, transition_count = re.subn(
+                  r"^#define ksu_security_bounded_transition_compat\(\.\.\.\) security_bounded_transition\(&selinux_state, __VA_ARGS__\)$",
+                  "#define ksu_security_bounded_transition_compat(...) security_bounded_transition(__VA_ARGS__)",
+                  source,
+                  flags=re.MULTILINE,
+              )
+              source, sidtab_count = re.subn(
+                  r"sidtab_sid2str_get\(sidtab, entry, scontext, scontext_len\)",
+                  "sidtab_sid2str_get(sidtab, entry, scontext, scontext_len, true)",
+                  source,
+              )
+              source_path.write_text(source)
+              print(f"SELinux fixes applied (avc={avc_count}, transition={transition_count}, sidtab={sidtab_count})")
+          PY
+
+      - name: Fix BakaSU SELinux AVC reset for selinux_policy layout
         run: |
-          # Use arter97's root defconfig or fallback to vendor cape defconfig
-          if [ -f defconfig ]; then
-            cp defconfig arch/arm64/configs/custom_defconfig
-          elif [ -f arch/arm64/configs/vendor/cape_defconfig ]; then
-            cp arch/arm64/configs/vendor/cape_defconfig arch/arm64/configs/custom_defconfig
-          else
-            cp arch/arm64/configs/vendor/taro_defconfig arch/arm64/configs/custom_defconfig
-          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          rules = Path("KernelSU/kernel/selinux/rules.c")
+          if rules.exists():
+              source = rules.read_text()
+              old = "#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))"
+              new = "#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0) || defined(SELINUX_POLICY_INSTEAD_SELINUX_SS))"
+              if old in source:
+                  rules.write_text(source.replace(old, new))
+                  print("AVC reset guard applied")
+          PY
 
-          # Enable BakaSU Kernel configs
-          echo "CONFIG_KSU=y" >> arch/arm64/configs/custom_defconfig
-          echo "CONFIG_KSU_DEBUG=n" >> arch/arm64/configs/custom_defconfig
-
-      - name: Compile Kernel
+      - name: Fix BakaSU disabled-preinit stub
         run: |
-          export PATH="/home/arter97/android/nathan/llvm-22.1.0-x86_64/bin:$PATH"
-          export ARCH=arm64
-          export SUBARCH=arm64
+          python3 - <<'PY'
+          from pathlib import Path
+          header = Path("KernelSU/kernel/preinit/preinit.h")
+          if header.exists():
+              source = header.read_text()
+              old = "return false;"
+              new = "return;"
+              if "ksu_preinit_handle_execve_manual" in source:
+                  source = source.replace("return false;", "return;")
+                  header.write_text(source)
+                  print("Disabled-preinit stub fixed")
+          PY
 
-          # Generate .config
-          make O=out custom_defconfig \
-            CC=clang \
-            LLVM=1 \
-            LLVM_IAS=1
+      - name: Prepare Pong defconfig
+        run: |
+          cp defconfig arch/arm64/configs/custom_defconfig
+          KERNEL_VERSION="$(tr -d '\r\n' < version 2>/dev/null || echo 'custom')"
+          sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"-arter97-$KERNEL_VERSION\"|" arch/arm64/configs/custom_defconfig
 
-          # Build Image
-          make -j$(nproc --all) O=out \
-            CC=clang \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          cat >> arch/arm64/configs/custom_defconfig <<'EOF'
+          CONFIG_KSU=y
+          CONFIG_KSU_MANUAL_HOOK=y
+          EOF
 
-      - name: Package with AnyKernel3
+      - name: Configure Kernel
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out custom_defconfig
+          make O=out olddefconfig
+
+      - name: Install Kernel UAPI Headers
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out headers_install INSTALL_HDR_PATH=out/usr
+
+      - name: Build Kernel Binaries
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make -j"$(nproc --all)" O=out Image Image.gz
+
+      - name: Package AnyKernel3 Flashable Zip
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
-          rm -rf anykernel/.git
-
-          # Set device parameters for Nothing Phone (2) (Pong)
           sed -i 's/device.name1=.*/device.name1=Pong/g' anykernel/anykernel.sh
           sed -i 's/device.name2=.*/device.name2=pong/g' anykernel/anykernel.sh
-          sed -i 's/device.name3=.*/device.name3=sm8475/g' anykernel/anykernel.sh
           sed -i 's/is_slot_device=0/is_slot_device=auto/g' anykernel/anykernel.sh
 
-          # Find compiled kernel Image
-          if [ -f out/arch/arm64/boot/Image.gz ]; then
-            cp out/arch/arm64/boot/Image.gz anykernel/
-          elif [ -f out/arch/arm64/boot/Image ]; then
-            cp out/arch/arm64/boot/Image anykernel/
-          else
-            echo "Error: Kernel binary not generated in out/arch/arm64/boot/"
-            exit 1
-          fi
-
+          cp out/arch/arm64/boot/Image anykernel/
           cd anykernel
-          zip -r9 ../arter97-NP2-BakaSU.zip * -x README.md *placeholder
+          zip -r9 ../AnyKernel3-Pong-BakaSU.zip * -x .git* README.md *placeholder
 
-      - name: Upload Kernel Artifact
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: arter97-NP2-BakaSU-Kernel
-          path: arter97-NP2-BakaSU.zip
-          retention-days: 14
+          name: Pong-BakaSU-Kernel
+          path: |
+            AnyKernel3-Pong-BakaSU.zip
+            out/arch/arm64/boot/Image
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
