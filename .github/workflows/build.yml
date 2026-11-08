@@ -140,6 +140,13 @@ jobs:
       - name: Prepare Pong defconfig
         run: |
           cp defconfig arch/arm64/configs/custom_defconfig
+
+          # Resolve the source version from the repository root. Do not embed
+          # $(cat version) in CONFIG_LOCALVERSION: with O=out, Kbuild evaluates
+          # that command from the output directory, where the file is absent.
+          KERNEL_VERSION="$(tr -d '\r\n' < version)"
+          test -n "$KERNEL_VERSION"
+          sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"-arter97-$KERNEL_VERSION\"|" arch/arm64/configs/custom_defconfig
           cat >> arch/arm64/configs/custom_defconfig <<'EOF'
 
           # BakaSU
