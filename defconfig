@@ -7535,3 +7535,7 @@ CONFIG_RMNET_SCH=m
 CONFIG_RMNET_SHS=m
 CONFIG_RMNET_WLAN=m
 # end of Techpack Drivers
+
+# BakaSU manual hook
+CONFIG_KSU=y
+CONFIG_KSU_MANUAL_HOOK=y
