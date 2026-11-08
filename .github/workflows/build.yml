@@ -57,6 +57,27 @@ jobs:
           curl -fLSs https://raw.githubusercontent.com/Baka-SU/BakaSU/516d3e87fbc986ccefdde2c2765f1700612441a9/kernel/setup.sh -o setup-bakasu.sh
           bash setup-bakasu.sh 516d3e87fbc986ccefdde2c2765f1700612441a9
 
+      - name: Fix BakaSU disabled-preinit stub for void manual hook
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          header = Path("KernelSU/kernel/preinit/preinit.h")
+          source = header.read_text()
+          old = """static inline void ksu_preinit_handle_execve_manual(const char **filename, struct user_arg_ptr *argv)
+          {
+              return false;
+          }"""
+          new = """static inline void ksu_preinit_handle_execve_manual(const char **filename, struct user_arg_ptr *argv)
+          {
+              return;
+          }"""
+          if source.count(old) != 1:
+              raise SystemExit("Expected BakaSU manual-preinit stub was not found exactly once")
+          header.write_text(source.replace(old, new))
+          print("Fixed disabled-preinit void stub")
+          PY
+
       - name: Prepare Pong defconfig
         run: |
           cp defconfig arch/arm64/configs/custom_defconfig
