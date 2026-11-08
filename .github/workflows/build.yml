@@ -41,7 +41,7 @@ jobs:
             bc bison build-essential ccache curl flex git gnupg gperf \
             libncurses5-dev libssl-dev libxml2 libxml2-utils lzop rsync \
             schedtool squashfs-tools xsltproc zip zlib1g-dev python3 \
-            libelf-dev lz4 cpio fakeroot dwarves
+            libelf-dev lz4 cpio fakeroot dwarves p7zip-full
 
       - name: Install LLVM 22.1.0
         run: |
@@ -195,11 +195,94 @@ jobs:
           make -j"$(nproc --all)" O=out Image.gz
           test -s out/arch/arm64/boot/Image.gz
 
-      - name: Upload build artifacts
+      - name: Package kernel into matching stock boot image
+        env:
+          ARCH: arm64
+        run: |
+          set -euo pipefail
+
+          STOCK_ARCHIVE="Pong_B4.1-260818-1726-image-boot.7z"
+          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/${STOCK_ARCHIVE}"
+          STOCK_SHA256="f7fd61cfd62eafd1209720bc7e9d846782a13f00afd400bb259d7a8dfe57154c"
+          WORKDIR="$RUNNER_TEMP/pong-boot-package"
+          mkdir -p "$WORKDIR/stock"
+
+          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
+          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -
+
+          7z x -y "$WORKDIR/$STOCK_ARCHIVE" -o"$WORKDIR/stock" >/dev/null
+          STOCK_BOOT="$(find "$WORKDIR/stock" -type f -name boot.img -print -quit)"
+          test -n "$STOCK_BOOT"
+          test -s "$STOCK_BOOT"
+
+          # Use pinned AOSP/LineageOS boot-image utilities to retain stock
+          # command line, OS version, patch level, header and ramdisk settings.
+          git clone --quiet https://github.com/LineageOS/android_system_tools_mkbootimg.git "$WORKDIR/mkbootimg-tools"
+          git -C "$WORKDIR/mkbootimg-tools" checkout --quiet 808ecd09666ffe0ff5800f02af693abce56eb395
+
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/stock-unpacked" \
+            --format info | tee "$WORKDIR/stock-boot-info.txt"
+
+          HEADER_VERSION="$(awk -F': ' '/boot image header version:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+          case "$HEADER_VERSION" in
+            3|4) ;;
+            *) echo "Unsupported stock boot header version: $HEADER_VERSION"; exit 1 ;;
+          esac
+
+          # For v4, refuse to drop a non-empty legacy GKI boot signature.
+          # A changed kernel cannot retain the original signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+            if [ "$SIGNATURE_SIZE" != "0" ]; then
+              echo "Stock boot image has a non-empty v4 boot signature ($SIGNATURE_SIZE bytes)."
+              echo "Refusing to repack it with a stale or removed signature."
+              exit 1
+            fi
+          fi
+
+          # Replace only the boot partition's kernel payload. Keep the original
+          # stock ramdisk and all metadata extracted from this exact release.
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/stock-unpacked/kernel"
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/stock-unpacked" \
+            --format mkbootimg -0 > "$WORKDIR/mkbootimg-args.bin"
+
+          mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
+          python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
+            "${MKBOOTIMG_ARGS[@]}" \
+            --output "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-260818-1726.img"
+
+          # Independently unpack the result and verify the kernel, ramdisk,
+          # header, OS version, patch level and kernel command line.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-260818-1726.img" \
+            --out "$WORKDIR/repacked-unpacked" \
+            --format info | tee "$WORKDIR/repacked-boot-info.txt"
+
+          cmp out/arch/arm64/boot/Image.gz "$WORKDIR/repacked-unpacked/kernel"
+          cmp "$WORKDIR/stock-unpacked/ramdisk" "$WORKDIR/repacked-unpacked/ramdisk"
+
+          for field in "os version" "os patch level" "boot image header version" "command line args"; do
+            grep -F "$field:" "$WORKDIR/stock-boot-info.txt" > "$WORKDIR/stock-field.txt"
+            grep -F "$field:" "$WORKDIR/repacked-boot-info.txt" > "$WORKDIR/repacked-field.txt"
+            cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
+          done
+
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-260818-1726.img")"
+          test "$BOOT_SIZE" -le 134217728
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-260818-1726.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-260818-1726.img.sha256"
+
+      - name: Upload kernel and test boot image
         uses: actions/upload-artifact@v4
         with:
-          name: Pong-BakaSU-Image-TEST-ONLY
+          name: Pong-BakaSU-B4.1-260818-1726-TEST-ONLY
           path: |
+            boot-bakasu-pong-b4.1-260818-1726.img
+            boot-bakasu-pong-b4.1-260818-1726.img.sha256
             out/arch/arm64/boot/Image.gz
             out/.config
           retention-days: 7
