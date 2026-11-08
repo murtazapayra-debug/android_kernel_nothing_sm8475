@@ -231,16 +231,15 @@ jobs:
             *) echo "Unsupported stock boot header version: $HEADER_VERSION"; exit 1 ;;
           esac
 
-          # For v4, refuse to drop a non-empty legacy GKI boot signature.
-          # A changed kernel cannot retain the original signature.
-          if [ "$HEADER_VERSION" = "4" ]; then
-            SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
-            if [ "$SIGNATURE_SIZE" != "0" ]; then
-              echo "Stock boot image has a non-empty v4 boot signature ($SIGNATURE_SIZE bytes)."
-              echo "Refusing to repack it with a stale or removed signature."
-              exit 1
-            fi
-          fi
+          # The stock GKI boot signature is for VTS certification,
+# not device-specific bootloader verification.
+# A modified kernel cannot retain the original signature.
+if [ "$HEADER_VERSION" = "4" ]; then
+  SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+
+  echo "Stock GKI boot signature: ${SIGNATURE_SIZE} bytes"
+  echo "The modified test image will be packaged without the stale GKI signature."
+fi
 
           # Replace only the boot partition's kernel payload. Keep the original
           # stock ramdisk and all metadata extracted from this exact release.
@@ -266,6 +265,13 @@ jobs:
             --format info | tee "$WORKDIR/repacked-boot-info.txt"
 
           cmp out/arch/arm64/boot/Image.gz "$WORKDIR/repacked-unpacked/kernel"
+          # Verify that the output does not contain a stale GKI signature.
+if [ "$HEADER_VERSION" = "4" ]; then
+  OUTPUT_SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/repacked-boot-info.txt")"
+
+  test "$OUTPUT_SIGNATURE_SIZE" = "0"
+  echo "Verified: output boot signature size is 0."
+fi
           cmp "$WORKDIR/stock-unpacked/ramdisk" "$WORKDIR/repacked-unpacked/ramdisk"
 
           for field in "os version" "os patch level" "boot image header version" "command line args"; do
