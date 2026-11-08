@@ -245,10 +245,13 @@ jobs:
           # Replace only the boot partition's kernel payload. Keep the original
           # stock ramdisk and all metadata extracted from this exact release.
           cp out/arch/arm64/boot/Image.gz "$WORKDIR/stock-unpacked/kernel"
+          # Generate the mkbootimg argument list into a second directory
+          # so the first extraction (and its original ramdisk) stays intact.
           python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
             --boot_img "$STOCK_BOOT" \
-            --out "$WORKDIR/stock-unpacked" \
+            --out "$WORKDIR/mkbootimg-inputs" \
             --format mkbootimg -0 > "$WORKDIR/mkbootimg-args.bin"
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/mkbootimg-inputs/kernel"
 
           mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
           python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
