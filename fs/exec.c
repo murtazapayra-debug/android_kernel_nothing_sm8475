@@ -1956,6 +1956,9 @@ out_free:
 	free_bprm(&bprm);
 
 out_ret:
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	ksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags, &retval);
+#endif
 	putname(filename);
 	return retval;
 }
