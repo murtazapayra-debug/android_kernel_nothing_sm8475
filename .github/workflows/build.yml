@@ -109,6 +109,16 @@ jobs:
           grep -q '^CONFIG_KALLSYMS_ALL=y$' out/.config
           ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
 
+      - name: Install kernel UAPI headers for BakaSU preinit
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out headers_install INSTALL_HDR_PATH=out/usr
+          test -f out/usr/include/linux/unistd.h
+
       - name: Build kernel Image.gz
         env:
           ARCH: arm64
