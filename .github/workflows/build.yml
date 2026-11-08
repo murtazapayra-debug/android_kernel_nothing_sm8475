@@ -42,7 +42,7 @@ jobs:
 
       - name: Integrate BakaSU
         run: |
-          curl -fLSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash - | bash -
+          curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash
 
       - name: Configure Defconfig
         run: |
