@@ -57,6 +57,49 @@ jobs:
           curl -fLSs https://raw.githubusercontent.com/Baka-SU/BakaSU/516d3e87fbc986ccefdde2c2765f1700612441a9/kernel/setup.sh -o setup-bakasu.sh
           bash setup-bakasu.sh 516d3e87fbc986ccefdde2c2765f1700612441a9
 
+      - name: Adapt BakaSU SELinux helpers to this vendor 5.10 tree
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          source_path = Path("KernelSU/kernel/feature/selinux_hide.c")
+          source = source_path.read_text()
+
+          # This NothingOS 5.10 tree has selinux_state, but its avc/security
+          # helper prototypes are the legacy no-state variants. BakaSU's
+          # version-based compatibility macro incorrectly prepends
+          # &selinux_state for these two calls.
+          source, avc_count = re.subn(
+              r"^#define ksu_avc_has_perm_compat\(\.\.\.\) avc_has_perm\(&selinux_state, __VA_ARGS__\)$",
+              "#define ksu_avc_has_perm_compat(...) avc_has_perm(__VA_ARGS__)",
+              source,
+              flags=re.MULTILINE,
+          )
+          source, transition_count = re.subn(
+              r"^#define ksu_security_bounded_transition_compat\(\.\.\.\) security_bounded_transition\(&selinux_state, __VA_ARGS__\)$",
+              "#define ksu_security_bounded_transition_compat(...) security_bounded_transition(__VA_ARGS__)",
+              source,
+              flags=re.MULTILINE,
+          )
+
+          # This kernel's sidtab cache API has a fifth 'alloc' parameter.
+          source, sidtab_count = re.subn(
+              r"sidtab_sid2str_get\(sidtab, entry, scontext, scontext_len\)",
+              "sidtab_sid2str_get(sidtab, entry, scontext, scontext_len, true)",
+              source,
+          )
+
+          if (avc_count != 1 or transition_count != 1 or sidtab_count != 1):
+              raise SystemExit(
+                  "BakaSU SELinux compatibility patch did not match expected source "
+                  f"(avc={avc_count}, transition={transition_count}, sidtab={sidtab_count})"
+              )
+
+          source_path.write_text(source)
+          print("Applied vendor 5.10 SELinux helper compatibility fixes")
+          PY
+
       - name: Fix BakaSU disabled-preinit stub for void manual hook
         run: |
           python3 - <<'PY'
