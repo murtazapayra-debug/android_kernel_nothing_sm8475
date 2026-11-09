@@ -44,7 +44,7 @@ jobs:
       - name: Restore ccache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/ccache
+          path: ${{ runner.temp }}/ccache
           key: ccache-${{ runner.os }}-clang-22.1.0-${{ hashFiles('defconfig', 'version') }}-${{ github.run_id }}
           restore-keys: |
             ccache-${{ runner.os }}-clang-22.1.0-${{ hashFiles('defconfig', 'version') }}-
@@ -213,7 +213,7 @@ jobs:
           LLVM: "1"
           LLVM_IAS: "1"
           CC: ccache clang
-          CCACHE_DIR: ~/.cache/ccache
+          CCACHE_DIR: ${{ runner.temp }}/ccache
           CCACHE_MAXSIZE: 4G
           CCACHE_COMPILERCHECK: content
           CCACHE_BASEDIR: ${{ github.workspace }}
