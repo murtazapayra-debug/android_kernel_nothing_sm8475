@@ -230,9 +230,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          STOCK_ARCHIVE="Pong_B4.1-260818-1726-image-boot.7z"
-          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/${STOCK_ARCHIVE}"
-          STOCK_SHA256="f7fd61cfd62eafd1209720bc7e9d846782a13f00afd400bb259d7a8dfe57154c"
+          STOCK_ARCHIVE="Pong_B4.1-261014-1615-image-boot.7z"
+          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-261014-1615/${STOCK_ARCHIVE}"
+          STOCK_SHA256="8c0d9260e92a5df32e083e113113b790b127764ee2e95ddce77ebb4d0c6ab33e"
           WORKDIR="$RUNNER_TEMP/pong-boot-package"
           mkdir -p "$WORKDIR/stock"
 
@@ -283,12 +283,12 @@ jobs:
           mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
           python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
             "${MKBOOTIMG_ARGS[@]}" \
-            --output "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-260818-1726.img"
+            --output "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img"
 
           # Independently unpack the result and verify the kernel, ramdisk,
           # header, OS version, patch level and kernel command line.
           python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
-            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-260818-1726.img" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
             --out "$WORKDIR/repacked-unpacked" \
             --format info | tee "$WORKDIR/repacked-boot-info.txt"
 
@@ -307,18 +307,18 @@ jobs:
             cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
           done
 
-          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-260818-1726.img")"
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img")"
           test "$BOOT_SIZE" -le 134217728
-          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-260818-1726.img" \
-            > "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-260818-1726.img.sha256"
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img.sha256"
 
       - name: Upload kernel and test boot image
         uses: actions/upload-artifact@v4
         with:
-          name: Pong-BakaSU-B4.1-260818-1726-TEST-ONLY
+          name: Pong-BakaSU-B4.1-261014-1615-TEST-ONLY
           path: |
-            boot-bakasu-pong-b4.1-260818-1726.img
-            boot-bakasu-pong-b4.1-260818-1726.img.sha256
+            boot-bakasu-pong-b4.1-261014-1615.img
+            boot-bakasu-pong-b4.1-261014-1615.img.sha256
             out/arch/arm64/boot/Image.gz
             out/.config
           retention-days: 7
