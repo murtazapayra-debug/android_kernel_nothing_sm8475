@@ -20,7 +20,8 @@
 #include <asm/insn.h>
 #include <asm/sections.h>
 
-#if defined(CONFIG_MODULES) || defined(CONFIG_BPF_JIT)
+/* Kprobes needs module_alloc() for its out-of-line instruction slots. */
+#if defined(CONFIG_MODULES) || defined(CONFIG_BPF_JIT) || defined(CONFIG_KPROBES)
 void *module_alloc(unsigned long size)
 {
 	u64 module_alloc_end = module_alloc_base + MODULES_VSIZE;
@@ -72,7 +73,7 @@ void module_memfree(void *module_region)
 {
 	vfree(module_region);
 }
-#endif /* CONFIG_MODULES || CONFIG_BPF_JIT */
+#endif /* CONFIG_MODULES || CONFIG_BPF_JIT || CONFIG_KPROBES */
 
 #ifdef CONFIG_MODULES
 enum aarch64_reloc_op {
