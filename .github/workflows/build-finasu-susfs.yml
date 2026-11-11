@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: finasu-susfs-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build Nothing Phone 2 kernel with FinaSU and SUSFS
