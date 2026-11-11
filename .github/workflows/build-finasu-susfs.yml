@@ -110,7 +110,7 @@ jobs:
           bash FinaSU/kernel/setup.sh v1.6.0
           test -L drivers/kernelsu
           test -f drivers/kernelsu/Kconfig
-          ! grep -q 'CONFIG_KSU_MANUAL_HOOK' fs/exec.c fs/open.c fs/stat.c
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
 
       - name: Prepare FinaSU defconfig
         run: |
