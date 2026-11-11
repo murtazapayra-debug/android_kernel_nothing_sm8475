@@ -96,6 +96,14 @@ jobs:
           echo "$HOME/llvm/bin" >> "$GITHUB_PATH"
           echo "LLVM_PATH=$HOME/llvm/bin/" >> "$GITHUB_ENV"
 
+      - name: Install ccache required by this kernel Makefile
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ccache
+          command -v ccache
+          ccache --version
+
       - name: Integrate pinned FinaSU v1.6.0
         run: |
           git clone --filter=blob:none https://github.com/LyraVoid/FinaSU.git FinaSU
