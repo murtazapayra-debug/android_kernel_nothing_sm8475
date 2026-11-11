@@ -162,8 +162,9 @@ jobs:
             fi
           done
 
-          ! grep -q '^CONFIG_MODULES=y
-          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_MODULES=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_HOOK_SUSFS_INLINE=y$' out/.config
 
           make O=out headers_install INSTALL_HDR_PATH="$GITHUB_WORKSPACE/out/usr"
           echo "---- Installed UAPI headers ----"
