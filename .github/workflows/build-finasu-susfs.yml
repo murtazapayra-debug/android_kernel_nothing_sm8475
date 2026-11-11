@@ -110,7 +110,7 @@ jobs:
           bash FinaSU/kernel/setup.sh v1.6.0
           test -L drivers/kernelsu
           test -f drivers/kernelsu/Kconfig
-          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
+          ! grep -q 'CONFIG_KSU_MANUAL_HOOK' fs/exec.c fs/open.c fs/stat.c
 
       - name: Prepare FinaSU defconfig
         run: |
@@ -165,7 +165,222 @@ jobs:
             fi
           done
 
-          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y          ! grep -q '^CONFIG_KSU_HOOK_SUSFS_INLINE=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y
+
+          make O=out headers_install INSTALL_HDR_PATH="$GITHUB_WORKSPACE/out/usr"
+          echo "---- Installed UAPI headers ----"
+          find out/usr/include -maxdepth 3 -type f | sed -n '1,40p'
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          set -euo pipefail
+          make -j2 O=out KSU_REQUIRE_PREINIT=1 Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+
+      - name: Upload FinaSU test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-FinaSU-Image-TEST-ONLY
+          path: |
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          ! grep -q '^CONFIG_KSU_HOOK_SUSFS_INLINE=y$' out/.config
+
+          make O=out headers_install INSTALL_HDR_PATH="$GITHUB_WORKSPACE/out/usr"
+          echo "---- Installed UAPI headers ----"
+          find out/usr/include -maxdepth 3 -type f | sed -n '1,40p'
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          set -euo pipefail
+          make -j2 O=out KSU_REQUIRE_PREINIT=1 Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+
+      - name: Upload FinaSU test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-FinaSU-Image-TEST-ONLY
+          path: |
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          ! grep -q '^CONFIG_KSU_HOOK_SUSFS_INLINE=y$' out/.config
+
+          make O=out headers_install INSTALL_HDR_PATH="$GITHUB_WORKSPACE/out/usr"
+          echo "---- Installed UAPI headers ----"
+          find out/usr/include -maxdepth 3 -type f | sed -n '1,40p'
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          set -euo pipefail
+          make -j2 O=out KSU_REQUIRE_PREINIT=1 Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+
+      - name: Upload FinaSU test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-FinaSU-Image-TEST-ONLY
+          path: |
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          ! grep -q '^CONFIG_KSU_HOOK_SUSFS_INLINE=y$' out/.config
+
+          make O=out headers_install INSTALL_HDR_PATH="$GITHUB_WORKSPACE/out/usr"
+          echo "---- Installed UAPI headers ----"
+          find out/usr/include -maxdepth 3 -type f | sed -n '1,40p'
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          set -euo pipefail
+          make -j2 O=out KSU_REQUIRE_PREINIT=1 Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+
+      - name: Upload FinaSU test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-FinaSU-Image-TEST-ONLY
+          path: |
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          ! grep -q '^CONFIG_KSU_HOOK_SUSFS_INLINE=y
+
+          make O=out headers_install INSTALL_HDR_PATH="$GITHUB_WORKSPACE/out/usr"
+          echo "---- Installed UAPI headers ----"
+          find out/usr/include -maxdepth 3 -type f | sed -n '1,40p'
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          set -euo pipefail
+          make -j2 O=out KSU_REQUIRE_PREINIT=1 Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+
+      - name: Upload FinaSU test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-FinaSU-Image-TEST-ONLY
+          path: |
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          ! grep -q '^CONFIG_KSU_HOOK_SUSFS_INLINE=y$' out/.config
+
+          make O=out headers_install INSTALL_HDR_PATH="$GITHUB_WORKSPACE/out/usr"
+          echo "---- Installed UAPI headers ----"
+          find out/usr/include -maxdepth 3 -type f | sed -n '1,40p'
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          set -euo pipefail
+          make -j2 O=out KSU_REQUIRE_PREINIT=1 Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+
+      - name: Upload FinaSU test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-FinaSU-Image-TEST-ONLY
+          path: |
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          ! grep -q '^CONFIG_KSU_HOOK_SUSFS_INLINE=y$' out/.config
+
+          make O=out headers_install INSTALL_HDR_PATH="$GITHUB_WORKSPACE/out/usr"
+          echo "---- Installed UAPI headers ----"
+          find out/usr/include -maxdepth 3 -type f | sed -n '1,40p'
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          set -euo pipefail
+          make -j2 O=out KSU_REQUIRE_PREINIT=1 Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+
+      - name: Upload FinaSU test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-FinaSU-Image-TEST-ONLY
+          path: |
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          ! grep -q '^CONFIG_KSU_HOOK_SUSFS_INLINE=y$' out/.config
+
+          make O=out headers_install INSTALL_HDR_PATH="$GITHUB_WORKSPACE/out/usr"
+          echo "---- Installed UAPI headers ----"
+          find out/usr/include -maxdepth 3 -type f | sed -n '1,40p'
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          set -euo pipefail
+          make -j2 O=out KSU_REQUIRE_PREINIT=1 Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+
+      - name: Upload FinaSU test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-FinaSU-Image-TEST-ONLY
+          path: |
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
 
           make O=out headers_install INSTALL_HDR_PATH="$GITHUB_WORKSPACE/out/usr"
           echo "---- Installed UAPI headers ----"
