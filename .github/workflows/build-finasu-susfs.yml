@@ -1,0 +1,196 @@
+name: Build Pong FinaSU + SUSFS kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - finasu-integration
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Nothing Phone 2 kernel with FinaSU and SUSFS
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: finasu-integration
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Restore LLVM toolchain cache
+        id: llvm-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/llvm
+          key: llvm-22.1.0-ubuntu-22.04-x86_64
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-clang-22.1.0-finasu-${{ hashFiles('defconfig', 'version') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-clang-22.1.0-finasu-${{ hashFiles('defconfig', 'version') }}-
+            ccache-${{ runner.os }}-clang-22.1.0-
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex git gnupg gperf \
+            libncurses5-dev libssl-dev libxml2 libxml2-utils lzop rsync \
+            schedtool squashfs-tools xsltproc zip zlib1g-dev python3 \
+            libelf-dev lz4 cpio fakeroot dwarves p7zip-full
+
+      - name: Install LLVM 22.1.0
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$HOME/llvm"
+          curl -fL --retry 3 https://www.kernel.org/pub/tools/llvm/files/llvm-22.1.0-x86_64.tar.gz -o llvm.tar.gz
+          tar -xzf llvm.tar.gz -C "$HOME/llvm" --strip-components=1
+          rm llvm.tar.gz
+
+      - name: Configure LLVM
+        run: |
+          test -x "$HOME/llvm/bin/clang"
+          echo "$HOME/llvm/bin" >> "$GITHUB_PATH"
+          echo "LLVM_PATH=$HOME/llvm/bin/" >> "$GITHUB_ENV"
+
+      - name: Integrate pinned FinaSU v1.5.2
+        run: |
+          git clone --filter=blob:none https://github.com/LyraVoid/FinaSU.git FinaSU
+          git -C FinaSU fetch --depth=1 origin tag v1.5.2
+          git -C FinaSU checkout --detach v1.5.2
+          test "$(git -C FinaSU describe --tags --exact-match)" = "v1.5.2"
+          bash FinaSU/kernel/setup.sh v1.5.2
+          test -L drivers/kernelsu
+          test -f drivers/kernelsu/Kconfig
+
+      - name: Fetch Android 12 5.10 SUSFS implementation
+        run: |
+          set -euo pipefail
+          git clone --depth=1 --branch gki-android12-5.10 \
+            https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+          test -s susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
+          test -s susfs4ksu/kernel_patches/fs/susfs.c
+          test -s susfs4ksu/kernel_patches/include/linux/susfs.h
+          test -s susfs4ksu/kernel_patches/include/linux/susfs_def.h
+          echo "SUSFS source revision: $(git -C susfs4ksu rev-parse HEAD)"
+
+      - name: Preflight SUSFS patch against this exact vendor kernel
+        run: |
+          set -euo pipefail
+          PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch"
+          echo "Kernel source version: $(cat version)"
+          echo "Testing patch with zero fuzz and no source modifications..."
+          patch --dry-run --batch --fuzz=0 -p1 < "$PATCH"
+          echo "Patch preflight passed without fuzz."
+
+      - name: Apply SUSFS kernel implementation
+        run: |
+          set -euo pipefail
+          cp susfs4ksu/kernel_patches/fs/susfs.c fs/
+          cp susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+          cp susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/
+          patch --batch --fuzz=0 -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
+          grep -q 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' fs/Makefile
+          test -s fs/susfs.c
+          test -s include/linux/susfs.h
+          test -s include/linux/susfs_def.h
+
+      - name: Prepare FinaSU + SUSFS defconfig
+        run: |
+          set -euo pipefail
+          cp defconfig arch/arm64/configs/custom_defconfig
+          KERNEL_VERSION="$(tr -d '\r\n' < version)"
+          test -n "$KERNEL_VERSION"
+          sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"-arter97-$KERNEL_VERSION-finasu-susfs\"|" arch/arm64/configs/custom_defconfig
+          # Remove the inherited BakaSU-only manual hook configuration.
+          sed -i '/^# BakaSU manual hook$/d; /^CONFIG_KSU_MANUAL_HOOK=/d' arch/arm64/configs/custom_defconfig
+          cat >> arch/arm64/configs/custom_defconfig <<'EOF'
+
+          # FinaSU built-in with SUSFS (Tracepoint backend)
+          CONFIG_KSU=y
+          CONFIG_KPROBES=y
+          CONFIG_EXT4_FS=y
+          CONFIG_KALLSYMS_ALL=y
+          CONFIG_HEADERS_INSTALL=y
+          CONFIG_KSU_HOOK_TRACEPOINT=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_SUSFS_SUS_MAP=y
+          EOF
+
+      - name: Configure and verify FinaSU + SUSFS
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          set -euo pipefail
+          make O=out custom_defconfig
+          make O=out olddefconfig
+          grep -q '^CONFIG_KSU=y$' out/.config
+          grep -q '^CONFIG_KSU_HOOK_TRACEPOINT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS=y$' out/.config
+          grep -q '^CONFIG_KPROBES=y$' out/.config
+          grep -q '^CONFIG_EXT4_FS=y$' out/.config
+          grep -q '^CONFIG_HEADERS_INSTALL=y$' out/.config
+          grep -q '^CONFIG_KALLSYMS_ALL=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_HOOK_SUSFS_INLINE=y$' out/.config
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
+          make O=out headers_install INSTALL_HDR_PATH=out/usr
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+          CC: ccache clang
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_MAXSIZE: 4G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          ccache --zero-stats
+          make -j"$(nproc --all)" O=out Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+          ccache --show-stats
+
+      - name: Upload FinaSU + SUSFS build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-FinaSU-SUSFS-Image-TEST-ONLY
+          path: |
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
