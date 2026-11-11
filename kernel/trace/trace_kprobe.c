@@ -104,6 +104,7 @@ static nokprobe_inline bool trace_kprobe_has_gone(struct trace_kprobe *tk)
 	return !!(kprobe_gone(&tk->rp.kp));
 }
 
+#ifdef CONFIG_MODULES
 static nokprobe_inline bool trace_kprobe_within_module(struct trace_kprobe *tk,
 						 struct module *mod)
 {
@@ -112,9 +113,11 @@ static nokprobe_inline bool trace_kprobe_within_module(struct trace_kprobe *tk,
 
 	return strncmp(module_name(mod), name, len) == 0 && name[len] == ':';
 }
+#endif
 
 static nokprobe_inline bool trace_kprobe_module_exist(struct trace_kprobe *tk)
 {
+#ifdef CONFIG_MODULES
 	char *p;
 	bool ret;
 
@@ -130,6 +133,10 @@ static nokprobe_inline bool trace_kprobe_module_exist(struct trace_kprobe *tk)
 	*p = ':';
 
 	return ret;
+#else
+	/* No loadable modules can appear when module support is disabled. */
+	return true;
+#endif
 }
 
 static bool trace_kprobe_is_busy(struct dyn_event *ev)
@@ -672,6 +679,7 @@ end:
 	return ret;
 }
 
+#ifdef CONFIG_MODULES
 /* Module notifier call back, checking event on the module */
 static int trace_kprobe_module_callback(struct notifier_block *nb,
 				       unsigned long val, void *data)
@@ -692,7 +700,7 @@ static int trace_kprobe_module_callback(struct notifier_block *nb,
 			__unregister_trace_kprobe(tk);
 			ret = __register_trace_kprobe(tk);
 			if (ret)
-				pr_warn("Failed to re-register probe %s on %s: %d\n",
+				pr_warn("Failed to re-register probe %s on %s: %d\\n",
 					trace_probe_name(&tk->tp),
 					module_name(mod), ret);
 		}
@@ -704,34 +712,8 @@ static int trace_kprobe_module_callback(struct notifier_block *nb,
 
 static struct notifier_block trace_kprobe_module_nb = {
 	.notifier_call = trace_kprobe_module_callback,
-	.priority = 2	/* Invoked after kprobe and jump_label module callback */
 };
-
-/* Convert certain expected symbols into '_' when generating event names */
-static inline void sanitize_event_name(char *name)
-{
-	while (*name++ != '\0')
-		if (*name == ':' || *name == '.')
-			*name = '_';
-}
-
-struct count_symbols_struct {
-	const char *func_name;
-	unsigned int count;
-};
-
-static int count_symbols(void *data, const char *name, struct module *unused0,
-			 unsigned long unused1)
-{
-	struct count_symbols_struct *args = data;
-
-	if (strcmp(args->func_name, name))
-		return 0;
-
-	args->count++;
-
-	return 0;
-}
+#endif
 
 static unsigned int number_of_same_symbols(char *func_name)
 {
@@ -1996,8 +1978,10 @@ static __init int init_kprobe_trace_early(void)
 	if (ret)
 		return ret;
 
+#ifdef CONFIG_MODULES
 	if (register_module_notifier(&trace_kprobe_module_nb))
 		return -EINVAL;
+#endif
 
 	return 0;
 }
