@@ -12,7 +12,7 @@ permissions:
 jobs:
   build:
     name: Build Nothing Phone 2 kernel with FinaSU and SUSFS
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
 
     steps:
@@ -39,101 +39,41 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/llvm
-          key: llvm-22.1.0-ubuntu-22.04-x86_64
+          key: llvm-22.1.0-ubuntu-24.04-x86_64
 
-      - name: Restore ccache
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/ccache
-          key: ccache-${{ runner.os }}-clang-22.1.0-finasu-${{ hashFiles('defconfig', 'version') }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-${{ runner.os }}-clang-22.1.0-finasu-${{ hashFiles('defconfig', 'version') }}-
-            ccache-${{ runner.os }}-clang-22.1.0-
-
-      - name: Diagnose DNS and install missing build dependencies
+      - name: Verify preinstalled build tools and bootstrap bc without APT
         shell: bash
         run: |
           set -euo pipefail
 
-          # GitHub-hosted runners occasionally have transient DNS failures.
-          # Probe several Ubuntu mirrors before asking APT to download packages.
-          mirrors=(in.archive.ubuntu.com archive.ubuntu.com mirrors.edge.kernel.org)
-          selected_mirror=""
-          for attempt in 1 2 3; do
-            for mirror in "${mirrors[@]}"; do
-              if getent ahostsv4 "$mirror" >/dev/null 2>&1; then
-                selected_mirror="$mirror"
-                break
-              fi
-            done
-            [ -n "$selected_mirror" ] && break
-            echo "DNS probe attempt $attempt failed for all candidate Ubuntu mirrors."
-            getent ahostsv4 github.com || true
-            getent ahostsv4 kernel.org || true
-            cat /etc/resolv.conf || true
-            [ "$attempt" -lt 3 ] && sleep $((attempt * 10))
-          done
-
-          if [ -z "$selected_mirror" ]; then
-            echo "::error::Runner DNS cannot resolve any tested Ubuntu mirror. This is a hosted-runner network/DNS failure, not a kernel or SUSFS build error."
-            exit 1
-          fi
-          echo "Using reachable Ubuntu mirror: $selected_mirror"
-
-          # Rewrite both legacy .list files and deb822 .sources files.
-          # The previous workflow only edited apt-mirrors.txt, which may not
-          # be the active source definition on the runner image.
-          if [ -f /etc/apt/sources.list ]; then
-            sudo sed -i -E "s|https?://[^ /]+\.ubuntu\.com|http://$selected_mirror|g" /etc/apt/sources.list
-          fi
-          while IFS= read -r -d '' source_file; do
-            sudo sed -i -E "s|https?://[^ /]+\.ubuntu\.com|http://$selected_mirror|g" "$source_file"
-          done < <(find /etc/apt/sources.list.d -type f \( -name '*.list' -o -name '*.sources' \) -print0 2>/dev/null || true)
-
-          for attempt in 1 2 3; do
-            if sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::APT index refresh failed after 3 attempts using $selected_mirror."
+          # Ubuntu 24.04 hosted runners already provide the compiler,
+          # build-essential, Bison, Flex, Git, Python, Perl and core tools.
+          for tool in git make gcc g++ bison flex curl python3 perl tar gzip xz; do
+            command -v "$tool" >/dev/null 2>&1 || {
+              echo "::error::Required preinstalled runner tool is missing: $tool"
               exit 1
-            fi
-            sleep $((attempt * 10))
+            }
           done
 
-          packages=(
-            bc bison build-essential ccache flex git gnupg gperf
-            libncurses5-dev libssl-dev libxml2 libxml2-utils lzop rsync
-            schedtool squashfs-tools xsltproc zip zlib1g-dev python3
-            libelf-dev lz4 cpio fakeroot dwarves
-          )
-          missing=()
-          declare -A command_for=(
-            [bc]=bc [bison]=bison [ccache]=ccache [flex]=flex
-            [make]=build-essential [rsync]=rsync [lzop]=lzop
-            [xmllint]=libxml2-utils [xsltproc]=xsltproc
-            [mksquashfs]=squashfs-tools [lz4]=lz4 [pahole]=dwarves
-          )
-          for command_name in "${!command_for[@]}"; do
-            if ! command -v "$command_name" >/dev/null 2>&1; then
-              missing+=("${command_for[$command_name]}")
-            fi
-          done
-          if (("${#missing[@]}" > 0)); then
-            mapfile -t unique_missing < <(printf '%s\n' "${missing[@]}" | sort -u)
-            for attempt in 1 2 3; do
-              if sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends "${unique_missing[@]}"; then
-                break
-              fi
-              if [ "$attempt" -eq 3 ]; then
-                echo "::error::Dependency installation failed after 3 attempts."
-                exit 1
-              fi
-              sleep $((attempt * 10))
-            done
-          else
-            echo "All required build commands are already installed."
+          # Kernel makefiles invoke GNU bc. Build it from a pinned GitHub
+          # source revision so this job does not need Ubuntu APT/DNS mirrors.
+          if ! command -v bc >/dev/null 2>&1; then
+            git clone https://github.com/gavinhoward/bc.git bc-src
+            git -C bc-src checkout --detach 1a8e2e652a0bdfc60349be7b352c954690eaa179
+            (
+              cd bc-src
+              ./configure.sh --disable-generated-tests --disable-nls \
+                --disable-history --disable-man-pages --disable-dc \
+                --prefix="$HOME/.local"
+              make -j2
+              make install
+            )
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           fi
+
+          command -v bc
+          bc --version || true
+          echo "APT package installation was intentionally skipped."
 
       - name: Install LLVM 22.1.0
         if: steps.llvm-cache.outputs.cache-hit != 'true'
@@ -250,17 +190,10 @@ jobs:
           SUBARCH: arm64
           LLVM: "1"
           LLVM_IAS: "1"
-          CC: ccache clang
-          CCACHE_DIR: ${{ runner.temp }}/ccache
-          CCACHE_MAXSIZE: 4G
-          CCACHE_COMPILERCHECK: content
-          CCACHE_BASEDIR: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          ccache --zero-stats
-          make -j"$(nproc --all)" O=out Image.gz
+          make -j2 O=out Image.gz
           test -s out/arch/arm64/boot/Image.gz
-          ccache --show-stats
 
       - name: Upload FinaSU + SUSFS build artifacts
         uses: actions/upload-artifact@v4
