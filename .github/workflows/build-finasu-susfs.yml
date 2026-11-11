@@ -168,7 +168,7 @@ jobs:
 
           make O=out headers_install INSTALL_HDR_PATH="$GITHUB_WORKSPACE/out/usr"
           echo "---- Installed UAPI headers ----"
-          find out/usr/include -maxdepth 3 -type f | head -40
+          find out/usr/include -maxdepth 3 -type f | sed -n '1,40p'
           test -f out/usr/include/linux/unistd.h
 
       - name: Build kernel Image.gz
