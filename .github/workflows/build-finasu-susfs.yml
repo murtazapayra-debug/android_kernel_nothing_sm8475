@@ -44,6 +44,9 @@ jobs:
         with:
           path: ~/llvm
           key: llvm-22.1.0-ubuntu-24.04-x86_64
+          restore-keys: |
+            llvm-22.1.0-ubuntu-22.04-x86_64
+            llvm-22.1.0-
 
       - name: Verify preinstalled build tools and bootstrap bc without APT
         shell: bash
