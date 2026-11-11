@@ -636,7 +636,6 @@ static int vmap_pages_range(unsigned long addr, unsigned long end,
 	flush_cache_vmap(addr, end);
 	return err;
 }
-EXPORT_SYMBOL_GPL(map_kernel_range);
 
 int is_vmalloc_or_module_addr(const void *x)
 {
