@@ -122,7 +122,7 @@ jobs:
           sed -i '/^# BakaSU manual hook$/d; /^CONFIG_KSU_MANUAL_HOOK=/d' arch/arm64/configs/custom_defconfig
           cat >> arch/arm64/configs/custom_defconfig <<'EOF'
 
-# Test FinaSU with lazy initcall disabled; changes vendor driver init timing.
+          # Test without lazy initcall; this changes vendor driver init timing.
           CONFIG_LAZY_INITCALL=n
           # FinaSU Kprobes requires loadable-module core support.
           CONFIG_MODULES=y
