@@ -12,7 +12,7 @@ permissions:
 jobs:
   build:
     name: Build Nothing Phone 2 kernel with FinaSU and SUSFS
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
 
     steps:
@@ -39,16 +39,41 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/llvm
-          key: llvm-22.1.0-ubuntu-22.04-x86_64
+          key: llvm-22.1.0-ubuntu-24.04-x86_64
 
-      - name: Restore ccache
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/ccache
-          key: ccache-${{ runner.os }}-clang-22.1.0-finasu-${{ hashFiles('defconfig', 'version') }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-${{ runner.os }}-clang-22.1.0-finasu-${{ hashFiles('defconfig', 'version') }}-
-            ccache-${{ runner.os }}-clang-22.1.0-
+      - name: Verify preinstalled build tools and bootstrap bc without APT
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Ubuntu 24.04 hosted runners already provide the compiler,
+          # build-essential, Bison, Flex, Git, Python, Perl and core tools.
+          for tool in git make gcc g++ bison flex curl python3 perl tar gzip xz; do
+            command -v "$tool" >/dev/null 2>&1 || {
+              echo "::error::Required preinstalled runner tool is missing: $tool"
+              exit 1
+            }
+          done
+
+          # Kernel makefiles invoke GNU bc. Build it from a pinned GitHub
+          # source revision so this job does not need Ubuntu APT/DNS mirrors.
+          if ! command -v bc >/dev/null 2>&1; then
+            git clone https://github.com/gavinhoward/bc.git bc-src
+            git -C bc-src checkout --detach 1a8e2e652a0bdfc60349be7b352c954690eaa179
+            (
+              cd bc-src
+              ./configure.sh --disable-generated-tests --disable-nls \
+                --disable-history --disable-man-pages --disable-dc \
+                --prefix="$HOME/.local"
+              make -j2
+              make install
+            )
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+
+          command -v bc
+          bc --version || true
+          echo "APT package installation was intentionally skipped."
 
       - name: Diagnose DNS and install missing build dependencies
         shell: bash
@@ -250,17 +275,10 @@ jobs:
           SUBARCH: arm64
           LLVM: "1"
           LLVM_IAS: "1"
-          CC: ccache clang
-          CCACHE_DIR: ${{ runner.temp }}/ccache
-          CCACHE_MAXSIZE: 4G
-          CCACHE_COMPILERCHECK: content
-          CCACHE_BASEDIR: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          ccache --zero-stats
-          make -j"$(nproc --all)" O=out Image.gz
+          make -j2 O=out Image.gz
           test -s out/arch/arm64/boot/Image.gz
-          ccache --show-stats
 
       - name: Upload FinaSU + SUSFS build artifacts
         uses: actions/upload-artifact@v4
