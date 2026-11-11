@@ -124,7 +124,7 @@ jobs:
       - name: Preflight SUSFS patch against this exact vendor kernel
         run: |
           set -euo pipefail
-          PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.10.patch"
+          PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch"
           echo "Kernel source version: $(cat version)"
           echo "Testing patch with zero fuzz and no source modifications..."
           patch --dry-run --batch --fuzz=0 -p1 < "$PATCH"
@@ -136,7 +136,7 @@ jobs:
           cp susfs4ksu/kernel_patches/fs/susfs.c fs/
           cp susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
           cp susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/
-          patch --batch --fuzz=0 -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.10.patch
+          patch --batch --fuzz=0 -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
           grep -q 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' fs/Makefile
           test -s fs/susfs.c
           test -s include/linux/susfs.h
