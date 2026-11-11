@@ -20,8 +20,7 @@
 #include <asm/insn.h>
 #include <asm/sections.h>
 
-/* Kprobes needs module_alloc() for its out-of-line instruction slots. */
-#if defined(CONFIG_MODULES) || defined(CONFIG_BPF_JIT) || defined(CONFIG_KPROBES)
+#if defined(CONFIG_MODULES) || defined(CONFIG_BPF_JIT)
 void *module_alloc(unsigned long size)
 {
 	u64 module_alloc_end = module_alloc_base + MODULES_VSIZE;
