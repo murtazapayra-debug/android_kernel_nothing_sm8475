@@ -122,6 +122,8 @@ jobs:
           sed -i '/^# BakaSU manual hook$/d; /^CONFIG_KSU_MANUAL_HOOK=/d' arch/arm64/configs/custom_defconfig
           cat >> arch/arm64/configs/custom_defconfig <<'EOF'
 
+          # Kprobes requires loadable-module support in this kernel tree.
+          CONFIG_MODULES=y
           # FinaSU built-in, Tracepoint backend; SUSFS intentionally deferred
           CONFIG_KSU=y
           CONFIG_KPROBES=y
@@ -143,9 +145,11 @@ jobs:
           make O=out olddefconfig
 
           echo "---- Resolved FinaSU kernel configuration ----"
-          grep -E '^(CONFIG_(KSU|KSU_HOOK_TRACEPOINT|KPROBES|EXT4_FS|HEADERS_INSTALL|KALLSYMS_ALL)=|# CONFIG_(KSU|KSU_HOOK_TRACEPOINT|KPROBES|EXT4_FS|HEADERS_INSTALL|KALLSYMS_ALL) is not set)' out/.config || true
+          grep -E '^(CONFIG_(MODULES|HAVE_KPROBES|KPROBES|KSU|KSU_HOOK_TRACEPOINT|EXT4_FS|HEADERS_INSTALL|KALLSYMS_ALL)=|# CONFIG_(MODULES|HAVE_KPROBES|KPROBES|KSU|KSU_HOOK_TRACEPOINT|EXT4_FS|HEADERS_INSTALL|KALLSYMS_ALL) is not set)' out/.config || true
 
           for config in \
+            CONFIG_MODULES \
+            CONFIG_HAVE_KPROBES \
             CONFIG_KSU \
             CONFIG_KSU_HOOK_TRACEPOINT \
             CONFIG_KPROBES \
