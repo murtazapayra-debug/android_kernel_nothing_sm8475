@@ -75,7 +75,6 @@ config OPROFILE_NMI_TIMER
 
 config KPROBES
 	bool "Kprobes"
-	depends on MODULES
 	depends on HAVE_KPROBES
 	select KALLSYMS
 	help
@@ -83,6 +82,8 @@ config KPROBES
 	  execute a callback function.  register_kprobe() establishes
 	  a probepoint and specifies the callback.  Kprobes is useful
 	  for kernel debugging, non-intrusive instrumentation and testing.
+	  Built-in probes can operate without loadable-module support;
+	  module address tracking is unavailable when CONFIG_MODULES=n.
 	  If in doubt, say "N".
 
 config JUMP_LABEL
