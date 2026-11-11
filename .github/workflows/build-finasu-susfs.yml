@@ -71,7 +71,7 @@ jobs:
             fi
           done
           if (("${#missing[@]}" > 0)); then
-            mapfile -t unique_missing < <(printf '%s\\n' "${missing[@]}" | sort -u)
+            mapfile -t unique_missing < <(printf '%s\n' "${missing[@]}" | sort -u)
             sudo apt-get install -y --no-install-recommends "${unique_missing[@]}"
           else
             echo "All required build dependencies are already installed."
