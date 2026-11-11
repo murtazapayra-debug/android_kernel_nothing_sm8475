@@ -152,8 +152,8 @@ jobs:
             CONFIG_EXT4_FS \
             CONFIG_HEADERS_INSTALL \
             CONFIG_KALLSYMS_ALL; do
-            if ! grep -q "^$${config}=y$" out/.config; then
-              echo "::error::Required FinaSU option missing or disabled: $${config}"
+            if ! grep -q "^${config}=y$" out/.config; then
+              echo "::error::Required FinaSU option missing or disabled: ${config}"
               exit 1
             fi
           done
