@@ -1,4 +1,4 @@
-name: Build Pong FinaSU + SUSFS kernel
+name: Build Pong FinaSU kernel
 
 on:
   workflow_dispatch:
@@ -10,12 +10,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: finasu-susfs-${{ github.ref }}
+  group: finasu-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build Nothing Phone 2 kernel with FinaSU and SUSFS
+    name: Build Nothing Phone 2 kernel with FinaSU
     runs-on: ubuntu-24.04
     timeout-minutes: 180
 
@@ -96,53 +96,19 @@ jobs:
           echo "$HOME/llvm/bin" >> "$GITHUB_PATH"
           echo "LLVM_PATH=$HOME/llvm/bin/" >> "$GITHUB_ENV"
 
-      - name: Integrate pinned FinaSU v1.5.2
+      - name: Integrate pinned FinaSU v1.6.0
         run: |
           git clone --filter=blob:none https://github.com/LyraVoid/FinaSU.git FinaSU
-          git -C FinaSU fetch --depth=1 origin tag v1.5.2
-          git -C FinaSU checkout --detach v1.5.2
-          test "$(git -C FinaSU describe --tags --exact-match)" = "v1.5.2"
-          bash FinaSU/kernel/setup.sh v1.5.2
+          git -C FinaSU fetch --depth=1 origin tag v1.6.0
+          git -C FinaSU checkout --detach v1.6.0
+          test "$(git -C FinaSU describe --tags --exact-match)" = "v1.6.0"
+          bash FinaSU/kernel/setup.sh v1.6.0
           test -L drivers/kernelsu
           test -f drivers/kernelsu/Kconfig
           # This branch starts from clean r45b2 source, not the BakaSU manual-hook branch.
           ! grep -q 'CONFIG_KSU_MANUAL_HOOK' fs/exec.c fs/open.c fs/stat.c
 
-      - name: Fetch Android 12 5.10 SUSFS implementation
-        run: |
-          set -euo pipefail
-          # Test the Android 12 5.10 SUSFS implementation against the clean r45b2 vendor tree.
-          git clone --no-checkout https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
-          git -C susfs4ksu fetch --depth=1 origin refs/heads/gki-android12-5.10
-          git -C susfs4ksu checkout --detach FETCH_HEAD
-          test -s susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
-          test -s susfs4ksu/kernel_patches/fs/susfs.c
-          test -s susfs4ksu/kernel_patches/include/linux/susfs.h
-          test -s susfs4ksu/kernel_patches/include/linux/susfs_def.h
-          echo "SUSFS source revision: $(git -C susfs4ksu rev-parse HEAD)"
-
-      - name: Preflight SUSFS patch against this exact vendor kernel
-        run: |
-          set -euo pipefail
-          PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch"
-          echo "Kernel source version: $(cat version)"
-          echo "Testing patch with zero fuzz and no source modifications..."
-          patch --dry-run --batch --fuzz=0 -p1 < "$PATCH"
-          echo "Patch preflight passed without fuzz."
-
-      - name: Apply SUSFS kernel implementation
-        run: |
-          set -euo pipefail
-          cp susfs4ksu/kernel_patches/fs/susfs.c fs/
-          cp susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
-          cp susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/
-          patch --batch --fuzz=0 -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
-          grep -q 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' fs/Makefile
-          test -s fs/susfs.c
-          test -s include/linux/susfs.h
-          test -s include/linux/susfs_def.h
-
-      - name: Prepare FinaSU + SUSFS defconfig
+      - name: Prepare FinaSU-only defconfig
         run: |
           set -euo pipefail
           cp defconfig arch/arm64/configs/custom_defconfig
@@ -153,26 +119,16 @@ jobs:
           sed -i '/^# BakaSU manual hook$/d; /^CONFIG_KSU_MANUAL_HOOK=/d' arch/arm64/configs/custom_defconfig
           cat >> arch/arm64/configs/custom_defconfig <<'EOF'
 
-          # FinaSU built-in with SUSFS (Tracepoint backend)
+          # FinaSU built-in (Tracepoint backend; SUSFS deferred)
           CONFIG_KSU=y
           CONFIG_KPROBES=y
           CONFIG_EXT4_FS=y
           CONFIG_KALLSYMS_ALL=y
           CONFIG_HEADERS_INSTALL=y
           CONFIG_KSU_HOOK_TRACEPOINT=y
-          CONFIG_KSU_SUSFS=y
-          CONFIG_KSU_SUSFS_SUS_PATH=y
-          CONFIG_KSU_SUSFS_SUS_MOUNT=y
-          CONFIG_KSU_SUSFS_SUS_KSTAT=y
-          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-          CONFIG_KSU_SUSFS_ENABLE_LOG=y
-          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-          CONFIG_KSU_SUSFS_SUS_MAP=y
           EOF
 
-      - name: Configure and verify FinaSU + SUSFS
+      - name: Configure and verify FinaSU
         env:
           ARCH: arm64
           SUBARCH: arm64
@@ -184,7 +140,6 @@ jobs:
           make O=out olddefconfig
           grep -q '^CONFIG_KSU=y$' out/.config
           grep -q '^CONFIG_KSU_HOOK_TRACEPOINT=y$' out/.config
-          grep -q '^CONFIG_KSU_SUSFS=y$' out/.config
           grep -q '^CONFIG_KPROBES=y$' out/.config
           grep -q '^CONFIG_EXT4_FS=y$' out/.config
           grep -q '^CONFIG_HEADERS_INSTALL=y$' out/.config
@@ -203,13 +158,13 @@ jobs:
           LLVM_IAS: "1"
         run: |
           set -euo pipefail
-          make -j2 O=out Image.gz
+          make -j2 O=out KSU_REQUIRE_PREINIT=1 Image.gz
           test -s out/arch/arm64/boot/Image.gz
 
-      - name: Upload FinaSU + SUSFS build artifacts
+      - name: Upload FinaSU build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Pong-FinaSU-SUSFS-Image-TEST-ONLY
+          name: Pong-FinaSU-Image-TEST-ONLY
           path: |
             out/arch/arm64/boot/Image.gz
             out/.config
