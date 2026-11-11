@@ -109,8 +109,11 @@ jobs:
       - name: Fetch Android 13 5.10 SUSFS implementation
         run: |
           set -euo pipefail
-          git clone --depth=1 --branch gki-android13-5.10 \
-            https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+          # Pin the exact SUSFS submodule revision used by a known Pong/arter97
+          # SUSFS kernel, rather than tracking a newer moving branch head.
+          git clone --no-checkout https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+          git -C susfs4ksu fetch --depth=1 origin 3acbc40930ebb9da74fd59546225ea8e7496549f
+          git -C susfs4ksu checkout --detach 3acbc40930ebb9da74fd59546225ea8e7496549f
           test -s susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.10.patch
           test -s susfs4ksu/kernel_patches/fs/susfs.c
           test -s susfs4ksu/kernel_patches/include/linux/susfs.h
