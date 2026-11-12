@@ -260,9 +260,9 @@ jobs:
 
           hooks = Path("security/selinux/hooks.c")
           source = hooks.read_text()
-          source, avc_count = re.subn(r'avc_has_perm\\(&selinux_state,\\s*', 'avc_has_perm(', source)
-          source, ctx_count = re.subn(r'security_context_to_sid_force\\(&selinux_state,\\s*', 'security_context_to_sid_force(', source)
-          source, bounded_count = re.subn(r'security_bounded_transition\\(&selinux_state,\\s*', 'security_bounded_transition(', source)
+          source, avc_count = re.subn(r'avc_has_perm\(&selinux_state,\s*', 'avc_has_perm(', source)
+          source, ctx_count = re.subn(r'security_context_to_sid_force\(&selinux_state,\s*', 'security_context_to_sid_force(', source)
+          source, bounded_count = re.subn(r'security_bounded_transition\(&selinux_state,\s*', 'security_bounded_transition(', source)
           if not (avc_count >= 1 and ctx_count >= 1 and bounded_count >= 1):
               raise SystemExit(f"Unexpected SUSFS SELinux helper calls: avc={avc_count}, context={ctx_count}, bounded={bounded_count}")
           hooks.write_text(source)
@@ -270,8 +270,8 @@ jobs:
 
           exec_path = Path("fs/exec.c")
           exec_source = exec_path.read_text()
-          exec_source, free_count = re.subn(r'free_bprm\\(bprm\\)', 'free_bprm(&bprm)', exec_source)
-          if free_count == 0 and not re.search(r'free_bprm\\(&bprm\\)', exec_source):
+          exec_source, free_count = re.subn(r'free_bprm\(bprm\)', 'free_bprm(&bprm)', exec_source)
+          if free_count == 0 and not re.search(r'free_bprm\(&bprm\)', exec_source):
               raise SystemExit("Could not find the expected do_execveat_common free_bprm call")
           exec_path.write_text(exec_source)
           print(f"Normalized stack bprm cleanup call; replacements={free_count}")
