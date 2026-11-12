@@ -227,6 +227,7 @@ jobs:
           avc.write_text(source.replace(old, new))
           print("Applied vendor-compatible SUSFS AVC spoofing hook")
           PY
+          rm -f security/selinux/avc.c.rej
           grep -q 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' fs/Makefile
           test -s fs/susfs.c
           test -s include/linux/susfs.h
