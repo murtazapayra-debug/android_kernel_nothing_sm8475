@@ -152,6 +152,33 @@ jobs:
           p.write_text(s.replace(old, new, 1))
           PY
           grep -A10 -B2 'reset_avc_cache' FinaSU/kernel/selinux/rules.c | head -20
+          # The vendor 5.10 tree has the newer no-state SELinux APIs despite
+          # its old LINUX_VERSION_CODE. Match the declarations, not version numbers.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("FinaSU/kernel/feature/selinux_hide.c")
+          s = p.read_text()
+          old = """#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+          #define ksu_avc_has_perm_compat(...) avc_has_perm(__VA_ARGS__)
+          #define ksu_security_bounded_transition_compat(...) security_bounded_transition(__VA_ARGS__)
+          #else
+          #define ksu_avc_has_perm_compat(...) avc_has_perm(&selinux_state, __VA_ARGS__)
+          #define ksu_security_bounded_transition_compat(...) security_bounded_transition(&selinux_state, __VA_ARGS__)
+          #endif
+          """
+          new = """#define ksu_avc_has_perm_compat(...) avc_has_perm(__VA_ARGS__)
+          #define ksu_security_bounded_transition_compat(...) security_bounded_transition(__VA_ARGS__)
+          """
+          if old not in s:
+              raise SystemExit("Expected FinaSU SELinux compatibility macros not found; refusing an unsafe patch")
+          s = s.replace(old, new, 1)
+          old_call = "sidtab_sid2str_get(sidtab, entry, scontext, scontext_len)"
+          if s.count(old_call) != 1:
+              raise SystemExit("Expected exactly one old sidtab_sid2str_get call; refusing an unsafe patch")
+          s = s.replace(old_call, "sidtab_sid2str_get(sidtab, entry, scontext, scontext_len, true)", 1)
+          p.write_text(s)
+          PY
+          grep -n -A3 -B2 'ksu_avc_has_perm_compat\|sidtab_sid2str_get' FinaSU/kernel/feature/selinux_hide.c | head -24
           test -L drivers/kernelsu
           test -f drivers/kernelsu/Kconfig
           ! grep -q 'CONFIG_KSU_MANUAL_HOOK' fs/exec.c fs/open.c fs/stat.c
