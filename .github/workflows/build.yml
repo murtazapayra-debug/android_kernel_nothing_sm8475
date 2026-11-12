@@ -305,6 +305,32 @@ jobs:
           selinuxfs.write_text(source)
           print(f"Adapted vendor selinuxfs API: state={state_count}, sid={sid_count}, removed-unused-fsi={fsi_count}")
 
+          # The vendor status.c uses the global selinux_state API. The
+          # upstream SUSFS hunk introduces references to a per-instance
+          # local named state, which this vendor tree does not provide.
+          status = Path("security/selinux/status.c")
+          source = status.read_text()
+          source, lock_count = re.subn(
+              r"state->status_lock",
+              "selinux_state.status_lock",
+              source,
+          )
+          source, allow_count = re.subn(
+              r"security_get_allow_unknown\(state\)",
+              "security_get_allow_unknown()",
+              source,
+          )
+          if lock_count != 2 or allow_count != 1:
+              raise SystemExit(
+                  f"Unexpected vendor status.c SUSFS adaptation counts: "
+                  f"status_lock={lock_count}, allow_unknown={allow_count}"
+              )
+          status.write_text(source)
+          print(
+              "Adapted SUSFS SELinux status code to global state: "
+              f"status_lock={lock_count}, allow_unknown={allow_count}"
+          )
+
           # These helpers are only referenced by optional SUS_SU code, which
           # is intentionally disabled in this BakaSU configuration.
           susfs = Path("fs/susfs.c")
