@@ -255,7 +255,7 @@ jobs:
           path = Path("fs/exec.c")
           source = path.read_text()
           begin = source.index("static int do_execveat_common(")
-          finish = source.index("\\nint kernel_execve(", begin)
+          finish = source.index(chr(10) + "int kernel_execve(", begin)
           function = source[begin:finish]
           old = "free_bprm(bprm);"
           new = "free_bprm(&bprm);"
