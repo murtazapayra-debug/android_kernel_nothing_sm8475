@@ -177,16 +177,66 @@ jobs:
           cp susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/
           PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch"
           echo "Applying Android 12 / Linux 5.10 SUSFS patch to arter97 r45b2."
+          set +e
           patch --batch --fuzz=3 -p1 < "$PATCH"
+          PATCH_STATUS=$?
+          set -e
+          if [ "$PATCH_STATUS" -ne 0 ]; then
+            echo "Upstream patch has a known vendor SELinux AVC hunk mismatch; validating and applying that hunk manually."
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          avc = Path("security/selinux/avc.c")
+          source = avc.read_text()
+          old = '''\trc = security_sid_to_context_stack(sad->tsid, &scontext,
+          \t\t\t\t     &scontext_len);
+          \tif (rc)
+          \t\taudit_log_format(ab, " tsid=%d", sad->tsid);
+          \telse
+          \t\taudit_log_format(ab, " tcontext=%s", scontext);
+
+          \taudit_log_format(ab, " tclass=%s", secclass_map[sad->tclass-1].name);'''
+          new = '''\trc = security_sid_to_context_stack(sad->tsid, &scontext,
+          \t\t\t\t     &scontext_len);
+          # SUSFS AVC-log spoofing for the vendor tree's stack-based SID API.
+          # The upstream patch uses security_sid_to_context(sad->state, ...),
+          # which is not the API exposed by this NothingOS 5.10 source.
+          #ifdef_placeholder
+          if (unlikely(sad->tsid == susfs_ksu_sid && susfs_is_avc_log_spoofing_enabled)) {
+          \tif (rc)
+          \t\taudit_log_format(ab, " tsid=%d", susfs_kernel_sid);
+          \telse
+          \t\taudit_log_format(ab, " tcontext=%s", "u:r:kernel:s0");
+          \tgoto bypass_orig_flow;
+          }
+          #endif_placeholder
+          \tif (rc)
+          \t\taudit_log_format(ab, " tsid=%d", sad->tsid);
+          \telse
+          \t\taudit_log_format(ab, " tcontext=%s", scontext);
+
+          #ifdef_placeholder
+          bypass_orig_flow:
+          #endif_placeholder
+          \taudit_log_format(ab, " tclass=%s", secclass_map[sad->tclass-1].name);'''
+          if source.count(old) != 1:
+              raise SystemExit("Could not uniquely locate vendor SELinux AVC audit block")
+          new = new.replace("#ifdef_placeholder", "#ifdef CONFIG_KSU_SUSFS").replace("#endif_placeholder", "#endif")
+          avc.write_text(source.replace(old, new))
+          print("Applied vendor-compatible SUSFS AVC spoofing hook")
+          PY
           grep -q 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' fs/Makefile
           test -s fs/susfs.c
           test -s include/linux/susfs.h
           test -s include/linux/susfs_def.h
           if find . -name '*.rej' -print -quit | grep -q .; then
-            echo "::error::SUSFS patch left rejected hunks."
+            echo "::error::SUSFS patch left rejected hunks after vendor adaptation."
             find . -name '*.rej' -print
             exit 1
           fi
+          test "$PATCH_STATUS" -eq 0 || echo "Known AVC hunk was applied by the compatibility step."
 
       - name: Prepare Pong defconfig
         run: |
