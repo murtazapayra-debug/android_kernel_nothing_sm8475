@@ -259,15 +259,21 @@ jobs:
           function = source[begin:finish]
           old = "free_bprm(bprm);"
           new = "free_bprm(&bprm);"
-          if function.count(old) == 1 and function.count(new) == 0:
-              function = function.replace(old, new)
-          elif function.count(new) == 1 and function.count(old) == 0:
-              pass
-          else:
-              raise SystemExit(f"Unexpected do_execveat_common cleanup calls: pointer={function.count(old)}, stack={function.count(new)}")
+          pointer_calls = function.count(old)
+          stack_calls = function.count(new)
+          # The SUSFS patch leaves two cleanup paths in this function. Both
+          # own the stack-allocated bprm object and must pass its address.
+          if pointer_calls + stack_calls != 2:
+              raise SystemExit(
+                  f"Unexpected do_execveat_common cleanup count: "
+                  f"pointer={pointer_calls}, stack={stack_calls}"
+              )
+          function = function.replace(old, new)
+          if function.count(new) != 2:
+              raise SystemExit("Failed to normalize both stack bprm cleanup calls")
           source = source[:begin] + function + source[finish:]
           path.write_text(source)
-          print("Verified do_execveat_common uses free_bprm(&bprm); other callers unchanged.")
+          print("Verified both do_execveat_common cleanup paths use free_bprm(&bprm); other callers unchanged.")
           PY
 
           rm -f security/selinux/avc.c.rej
