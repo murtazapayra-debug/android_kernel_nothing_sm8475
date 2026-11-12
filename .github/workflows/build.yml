@@ -331,6 +331,27 @@ jobs:
               f"status_lock={lock_count}, allow_unknown={allow_count}"
           )
 
+          # This vendor kernel exposes selinux_initialized() as a no-argument
+          # helper backed by the global selinux_state. The upstream SUSFS
+          # hunk assumes the newer per-state argument.
+          services = Path("security/selinux/ss/services.c")
+          source = services.read_text()
+          source, initialized_count = re.subn(
+              r"selinux_initialized\(state\)",
+              "selinux_initialized()",
+              source,
+          )
+          if initialized_count != 2:
+              raise SystemExit(
+                  "Unexpected SUSFS services.c initialization API count: "
+                  f"{initialized_count}"
+              )
+          services.write_text(source)
+          print(
+              "Adapted SUSFS services.c to vendor selinux_initialized(): "
+              f"{initialized_count} calls"
+          )
+
           # These helpers are only referenced by optional SUS_SU code, which
           # is intentionally disabled in this BakaSU configuration.
           susfs = Path("fs/susfs.c")
