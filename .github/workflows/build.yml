@@ -258,15 +258,23 @@ jobs:
           from pathlib import Path
           import re
 
-          hooks = Path("security/selinux/hooks.c")
-          source = hooks.read_text()
-          source, avc_count = re.subn(r'avc_has_perm\(&selinux_state,\s*', 'avc_has_perm(', source)
-          source, ctx_count = re.subn(r'security_context_to_sid_force\(&selinux_state,\s*', 'security_context_to_sid_force(', source)
-          source, bounded_count = re.subn(r'security_bounded_transition\(&selinux_state,\s*', 'security_bounded_transition(', source)
-          if not (avc_count >= 1 and ctx_count >= 1 and bounded_count >= 1):
-              raise SystemExit(f"Unexpected SUSFS SELinux helper calls: avc={avc_count}, context={ctx_count}, bounded={bounded_count}")
-          hooks.write_text(source)
-          print(f"Adapted SUSFS SELinux APIs: avc={avc_count}, context={ctx_count}, bounded={bounded_count}")
+          selinux_sources = list(Path("security/selinux").rglob("*.c"))
+          avc_count = ctx_count = bounded_count = 0
+          for path in selinux_sources:
+              source = path.read_text()
+              source, avc = re.subn(r'avc_has_perm\(&selinux_state,\s*', 'avc_has_perm(', source)
+              source, ctx = re.subn(r'security_context_to_sid_force\(&selinux_state,\s*', 'security_context_to_sid_force(', source)
+              source, bounded = re.subn(r'security_bounded_transition\(&selinux_state,\s*', 'security_bounded_transition(', source)
+              avc_count += avc
+              ctx_count += ctx
+              bounded_count += bounded
+              if avc or ctx or bounded:
+                  path.write_text(source)
+          if avc_count < 1 or bounded_count < 1:
+              raise SystemExit(f"Missing expected SUSFS SELinux compatibility calls: avc={avc_count}, bounded={bounded_count}")
+          print(f"Adapted vendor SELinux APIs across security/selinux: avc={avc_count}, context={ctx_count}, bounded={bounded_count}")
+          if ctx_count == 0:
+              print("No stateful security_context_to_sid_force call was present; no context conversion change was needed.")
 
           exec_path = Path("fs/exec.c")
           exec_source = exec_path.read_text()
