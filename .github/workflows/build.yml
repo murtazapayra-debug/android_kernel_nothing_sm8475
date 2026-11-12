@@ -281,12 +281,12 @@ jobs:
           selinuxfs = Path("security/selinux/selinuxfs.c")
           source = selinuxfs.read_text()
           source, state_count = re.subn(
-              r"struct selinux_state \\*state = fsi->state;",
+              r"struct selinux_state \*state = fsi->state;",
               "struct selinux_state *state = &selinux_state;",
               source,
           )
           source, sid_count = re.subn(
-              r"security_sid_to_context\\(state,\\s*",
+              r"security_sid_to_context\(state,\s*",
               "security_sid_to_context(",
               source,
           )
@@ -303,12 +303,12 @@ jobs:
           susfs = Path("fs/susfs.c")
           source = susfs.read_text()
           source, switch_count = re.subn(
-              r"(?m)^static struct cred \\*susfs_switch_to_ksu_domain\\(",
+              r"(?m)^static struct cred \*susfs_switch_to_ksu_domain\(",
               "static __maybe_unused struct cred *susfs_switch_to_ksu_domain(",
               source,
           )
           source, restore_count = re.subn(
-              r"(?m)^static void susfs_restore_creds\\(",
+              r"(?m)^static void susfs_restore_creds\(",
               "static __maybe_unused void susfs_restore_creds(",
               source,
           )
