@@ -228,32 +228,8 @@ jobs:
           print("Applied vendor-compatible SUSFS AVC spoofing hook")
           PY
 
-          # The upstream SUSFS patch was authored against a pointer-based
-          # linux_binprm implementation. This vendor tree's do_execveat_common
-          # keeps bprm on the stack, so free_bprm must receive &bprm.
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("fs/exec.c")
-          source = path.read_text()
-          old = """\tretval = bprm_execve(&bprm, fd, filename, 0);
-          out_free:
-          \tfree_bprm(bprm);"""
-          new = """\tretval = bprm_execve(&bprm, fd, filename, 0);
-          out_free:
-          \tfree_bprm(&bprm);"""
-          if source.count(old) == 1:
-              source = source.replace(old, new)
-              print("Restored vendor stack-bprm cleanup call")
-          elif source.count(new) == 1:
-              print("Vendor stack-bprm cleanup call is already correct")
-          else:
-              raise SystemExit("Could not uniquely verify do_execveat_common free_bprm call")
-          path.write_text(source)
-          PY
-
-          # Normalize SUSFS SELinux helpers to the legacy vendor 5.10 APIs.
-          # This tree exposes no selinux_state parameter for these helpers.
+          # Upstream SUSFS uses newer SELinux helper signatures; adapt only
+          # calls that actually pass selinux_state, including multiline calls.
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -262,9 +238,9 @@ jobs:
           avc_count = ctx_count = bounded_count = 0
           for path in selinux_sources:
               source = path.read_text()
-              source, avc = re.subn(r'avc_has_perm\(&selinux_state,\s*', 'avc_has_perm(', source)
-              source, ctx = re.subn(r'security_context_to_sid_force\(&selinux_state,\s*', 'security_context_to_sid_force(', source)
-              source, bounded = re.subn(r'security_bounded_transition\(&selinux_state,\s*', 'security_bounded_transition(', source)
+              source, avc = re.subn(r'avc_has_perm\(\s*&selinux_state\s*,\s*', 'avc_has_perm(', source)
+              source, ctx = re.subn(r'security_context_to_sid_force\(\s*&selinux_state\s*,\s*', 'security_context_to_sid_force(', source)
+              source, bounded = re.subn(r'security_bounded_transition\(\s*&selinux_state\s*,\s*', 'security_bounded_transition(', source)
               avc_count += avc
               ctx_count += ctx
               bounded_count += bounded
@@ -272,17 +248,26 @@ jobs:
                   path.write_text(source)
           if avc_count < 1 or bounded_count < 1:
               raise SystemExit(f"Missing expected SUSFS SELinux compatibility calls: avc={avc_count}, bounded={bounded_count}")
-          print(f"Adapted vendor SELinux APIs across security/selinux: avc={avc_count}, context={ctx_count}, bounded={bounded_count}")
-          if ctx_count == 0:
-              print("No stateful security_context_to_sid_force call was present; no context conversion change was needed.")
+          print(f"Adapted vendor SELinux APIs: avc={avc_count}, context={ctx_count}, bounded={bounded_count}")
 
-          exec_path = Path("fs/exec.c")
-          exec_source = exec_path.read_text()
-          exec_source, free_count = re.subn(r'free_bprm\(bprm\)', 'free_bprm(&bprm)', exec_source)
-          if free_count == 0 and not re.search(r'free_bprm\(&bprm\)', exec_source):
-              raise SystemExit("Could not find the expected do_execveat_common free_bprm call")
-          exec_path.write_text(exec_source)
-          print(f"Normalized stack bprm cleanup call; replacements={free_count}")
+          # Only do_execveat_common owns stack-allocated bprm and needs &bprm.
+          # Other free_bprm callers (for example fill_bprm) receive a pointer.
+          path = Path("fs/exec.c")
+          source = path.read_text()
+          begin = source.index("static int do_execveat_common(")
+          finish = source.index("\\nint kernel_execve(", begin)
+          function = source[begin:finish]
+          old = "free_bprm(bprm);"
+          new = "free_bprm(&bprm);"
+          if function.count(old) == 1 and function.count(new) == 0:
+              function = function.replace(old, new)
+          elif function.count(new) == 1 and function.count(old) == 0:
+              pass
+          else:
+              raise SystemExit(f"Unexpected do_execveat_common cleanup calls: pointer={function.count(old)}, stack={function.count(new)}")
+          source = source[:begin] + function + source[finish:]
+          path.write_text(source)
+          print("Verified do_execveat_common uses free_bprm(&bprm); other callers unchanged.")
           PY
 
           rm -f security/selinux/avc.c.rej
