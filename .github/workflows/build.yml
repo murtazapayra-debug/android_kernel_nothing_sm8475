@@ -227,6 +227,31 @@ jobs:
           avc.write_text(source.replace(old, new))
           print("Applied vendor-compatible SUSFS AVC spoofing hook")
           PY
+
+          # The upstream SUSFS patch was authored against a pointer-based
+          # linux_binprm implementation. This vendor tree's do_execveat_common
+          # keeps bprm on the stack, so free_bprm must receive &bprm.
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("fs/exec.c")
+          source = path.read_text()
+          old = """\tretval = bprm_execve(&bprm, fd, filename, 0);
+          out_free:
+          \tfree_bprm(bprm);"""
+          new = """\tretval = bprm_execve(&bprm, fd, filename, 0);
+          out_free:
+          \tfree_bprm(&bprm);"""
+          if source.count(old) == 1:
+              source = source.replace(old, new)
+              print("Restored vendor stack-bprm cleanup call")
+          elif source.count(new) == 1:
+              print("Vendor stack-bprm cleanup call is already correct")
+          else:
+              raise SystemExit("Could not uniquely verify do_execveat_common free_bprm call")
+          path.write_text(source)
+          PY
+
           rm -f security/selinux/avc.c.rej
           grep -q 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' fs/Makefile
           test -s fs/susfs.c
