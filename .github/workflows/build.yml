@@ -221,19 +221,28 @@ jobs:
           clang --version | head -n 1
           echo "LLVM_PATH=$LLVM_PATH"
 
-      - name: Configure and verify BakaSU
+      - name: Configure and verify BakaSU + SUSFS
         env:
           ARCH: arm64
           SUBARCH: arm64
           LLVM: "1"
           LLVM_IAS: "1"
         run: |
+          set -euo pipefail
           make O=out custom_defconfig
           make O=out olddefconfig
           grep -q '^CONFIG_KSU=y$' out/.config
-          grep -q '^CONFIG_KSU_SUSFS=y          grep -q '^CONFIG_KALLSYMS_ALL=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_UNAME=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_OPEN_REDIRECT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
           ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
-
+          ! grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' out/.config
       - name: Install kernel UAPI headers for BakaSU preinit
         env:
           ARCH: arm64
@@ -326,7 +335,7 @@ jobs:
           # Independently unpack the result and verify the kernel, ramdisk,
           # header, OS version, patch level and kernel command line.
           python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
-            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
             --out "$WORKDIR/repacked-unpacked" \
             --format info | tee "$WORKDIR/repacked-boot-info.txt"
 
@@ -345,9 +354,9 @@ jobs:
             cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
           done
 
-          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img")"
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img")"
           test "$BOOT_SIZE" -le 134217728
-          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
             > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256"
 
       - name: Upload kernel and test boot image
@@ -355,8 +364,8 @@ jobs:
         with:
           name: Pong-BakaSU-SUSFS-B4.1-261014-1615-TEST-ONLY
           path: |
-            boot-bakasu-pong-b4.1-261014-1615.img
-            boot-bakasu-pong-b4.1-261014-1615.img.sha256
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256
             out/arch/arm64/boot/Image.gz
             out/.config
           retention-days: 7
@@ -451,12 +460,12 @@ jobs:
           mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
           python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
             "${MKBOOTIMG_ARGS[@]}" \
-            --output "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img"
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img"
 
           # Independently unpack the result and verify the kernel, ramdisk,
           # header, OS version, patch level and kernel command line.
           python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
-            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
             --out "$WORKDIR/repacked-unpacked" \
             --format info | tee "$WORKDIR/repacked-boot-info.txt"
 
@@ -475,18 +484,18 @@ jobs:
             cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
           done
 
-          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img")"
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img")"
           test "$BOOT_SIZE" -le 134217728
-          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
-            > "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img.sha256"
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256"
 
       - name: Upload kernel and test boot image
         uses: actions/upload-artifact@v4
         with:
-          name: Pong-BakaSU-B4.1-261014-1615-TEST-ONLY
+          name: Pong-BakaSU-SUSFS-B4.1-261014-1615-TEST-ONLY
           path: |
-            boot-bakasu-pong-b4.1-261014-1615.img
-            boot-bakasu-pong-b4.1-261014-1615.img.sha256
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256
             out/arch/arm64/boot/Image.gz
             out/.config
           retention-days: 7
@@ -581,12 +590,12 @@ jobs:
           mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
           python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
             "${MKBOOTIMG_ARGS[@]}" \
-            --output "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img"
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img"
 
           # Independently unpack the result and verify the kernel, ramdisk,
           # header, OS version, patch level and kernel command line.
           python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
-            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
             --out "$WORKDIR/repacked-unpacked" \
             --format info | tee "$WORKDIR/repacked-boot-info.txt"
 
@@ -605,18 +614,18 @@ jobs:
             cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
           done
 
-          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img")"
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img")"
           test "$BOOT_SIZE" -le 134217728
-          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
-            > "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img.sha256"
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256"
 
       - name: Upload kernel and test boot image
         uses: actions/upload-artifact@v4
         with:
-          name: Pong-BakaSU-B4.1-261014-1615-TEST-ONLY
+          name: Pong-BakaSU-SUSFS-B4.1-261014-1615-TEST-ONLY
           path: |
-            boot-bakasu-pong-b4.1-261014-1615.img
-            boot-bakasu-pong-b4.1-261014-1615.img.sha256
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256
             out/arch/arm64/boot/Image.gz
             out/.config
           retention-days: 7
@@ -711,12 +720,12 @@ jobs:
           mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
           python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
             "${MKBOOTIMG_ARGS[@]}" \
-            --output "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img"
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img"
 
           # Independently unpack the result and verify the kernel, ramdisk,
           # header, OS version, patch level and kernel command line.
           python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
-            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
             --out "$WORKDIR/repacked-unpacked" \
             --format info | tee "$WORKDIR/repacked-boot-info.txt"
 
@@ -735,18 +744,18 @@ jobs:
             cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
           done
 
-          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img")"
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img")"
           test "$BOOT_SIZE" -le 134217728
-          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
-            > "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img.sha256"
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256"
 
       - name: Upload kernel and test boot image
         uses: actions/upload-artifact@v4
         with:
-          name: Pong-BakaSU-B4.1-261014-1615-TEST-ONLY
+          name: Pong-BakaSU-SUSFS-B4.1-261014-1615-TEST-ONLY
           path: |
-            boot-bakasu-pong-b4.1-261014-1615.img
-            boot-bakasu-pong-b4.1-261014-1615.img.sha256
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256
             out/arch/arm64/boot/Image.gz
             out/.config
           retention-days: 7
@@ -841,12 +850,12 @@ jobs:
           mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
           python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
             "${MKBOOTIMG_ARGS[@]}" \
-            --output "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img"
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img"
 
           # Independently unpack the result and verify the kernel, ramdisk,
           # header, OS version, patch level and kernel command line.
           python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
-            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
             --out "$WORKDIR/repacked-unpacked" \
             --format info | tee "$WORKDIR/repacked-boot-info.txt"
 
@@ -865,18 +874,18 @@ jobs:
             cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
           done
 
-          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img")"
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img")"
           test "$BOOT_SIZE" -le 134217728
-          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
-            > "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img.sha256"
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256"
 
       - name: Upload kernel and test boot image
         uses: actions/upload-artifact@v4
         with:
-          name: Pong-BakaSU-B4.1-261014-1615-TEST-ONLY
+          name: Pong-BakaSU-SUSFS-B4.1-261014-1615-TEST-ONLY
           path: |
-            boot-bakasu-pong-b4.1-261014-1615.img
-            boot-bakasu-pong-b4.1-261014-1615.img.sha256
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256
             out/arch/arm64/boot/Image.gz
             out/.config
           retention-days: 7
@@ -971,12 +980,12 @@ jobs:
           mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
           python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
             "${MKBOOTIMG_ARGS[@]}" \
-            --output "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img"
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img"
 
           # Independently unpack the result and verify the kernel, ramdisk,
           # header, OS version, patch level and kernel command line.
           python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
-            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
             --out "$WORKDIR/repacked-unpacked" \
             --format info | tee "$WORKDIR/repacked-boot-info.txt"
 
@@ -995,18 +1004,18 @@ jobs:
             cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
           done
 
-          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img")"
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img")"
           test "$BOOT_SIZE" -le 134217728
-          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
-            > "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img.sha256"
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256"
 
       - name: Upload kernel and test boot image
         uses: actions/upload-artifact@v4
         with:
-          name: Pong-BakaSU-B4.1-261014-1615-TEST-ONLY
+          name: Pong-BakaSU-SUSFS-B4.1-261014-1615-TEST-ONLY
           path: |
-            boot-bakasu-pong-b4.1-261014-1615.img
-            boot-bakasu-pong-b4.1-261014-1615.img.sha256
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256
             out/arch/arm64/boot/Image.gz
             out/.config
           retention-days: 7
@@ -1101,12 +1110,12 @@ jobs:
           mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
           python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
             "${MKBOOTIMG_ARGS[@]}" \
-            --output "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img"
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img"
 
           # Independently unpack the result and verify the kernel, ramdisk,
           # header, OS version, patch level and kernel command line.
           python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
-            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
             --out "$WORKDIR/repacked-unpacked" \
             --format info | tee "$WORKDIR/repacked-boot-info.txt"
 
@@ -1125,18 +1134,18 @@ jobs:
             cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
           done
 
-          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img")"
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img")"
           test "$BOOT_SIZE" -le 134217728
-          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
-            > "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img.sha256"
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256"
 
       - name: Upload kernel and test boot image
         uses: actions/upload-artifact@v4
         with:
-          name: Pong-BakaSU-B4.1-261014-1615-TEST-ONLY
+          name: Pong-BakaSU-SUSFS-B4.1-261014-1615-TEST-ONLY
           path: |
-            boot-bakasu-pong-b4.1-261014-1615.img
-            boot-bakasu-pong-b4.1-261014-1615.img.sha256
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256
             out/arch/arm64/boot/Image.gz
             out/.config
           retention-days: 7
@@ -1231,12 +1240,12 @@ jobs:
           mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
           python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
             "${MKBOOTIMG_ARGS[@]}" \
-            --output "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img"
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img"
 
           # Independently unpack the result and verify the kernel, ramdisk,
           # header, OS version, patch level and kernel command line.
           python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
-            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
             --out "$WORKDIR/repacked-unpacked" \
             --format info | tee "$WORKDIR/repacked-boot-info.txt"
 
@@ -1255,18 +1264,18 @@ jobs:
             cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
           done
 
-          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img")"
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img")"
           test "$BOOT_SIZE" -le 134217728
-          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img" \
-            > "$GITHUB_WORKSPACE/boot-bakasu-pong-b4.1-261014-1615.img.sha256"
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256"
 
       - name: Upload kernel and test boot image
         uses: actions/upload-artifact@v4
         with:
-          name: Pong-BakaSU-B4.1-261014-1615-TEST-ONLY
+          name: Pong-BakaSU-SUSFS-B4.1-261014-1615-TEST-ONLY
           path: |
-            boot-bakasu-pong-b4.1-261014-1615.img
-            boot-bakasu-pong-b4.1-261014-1615.img.sha256
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img
+            boot-bakasu-susfs-pong-b4.1-261014-1615.img.sha256
             out/arch/arm64/boot/Image.gz
             out/.config
           retention-days: 7
