@@ -290,13 +290,20 @@ jobs:
               "security_sid_to_context(",
               source,
           )
-          if state_count != 2 or sid_count != 1:
+          # The two upstream handlers no longer need the per-superblock
+          # selinux_fs_info pointer after switching to the vendor global state.
+          source, fsi_count = re.subn(
+              r"(?m)^\s*struct selinux_fs_info \*fsi = file_inode\(file\)->i_sb->s_fs_info;\n",
+              "",
+              source,
+          )
+          if state_count != 2 or sid_count != 1 or fsi_count != 2:
               raise SystemExit(
                   f"Unexpected SUSFS selinuxfs API adaptation counts: "
-                  f"state={state_count}, sid={sid_count}"
+                  f"state={state_count}, sid={sid_count}, fsi={fsi_count}"
               )
           selinuxfs.write_text(source)
-          print(f"Adapted vendor selinuxfs API: state={state_count}, sid={sid_count}")
+          print(f"Adapted vendor selinuxfs API: state={state_count}, sid={sid_count}, removed-unused-fsi={fsi_count}")
 
           # These helpers are only referenced by optional SUS_SU code, which
           # is intentionally disabled in this BakaSU configuration.
