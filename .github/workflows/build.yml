@@ -274,6 +274,51 @@ jobs:
           source = source[:begin] + function + source[finish:]
           path.write_text(source)
           print("Verified both do_execveat_common cleanup paths use free_bprm(&bprm); other callers unchanged.")
+
+          # The vendor SELinux filesystem uses the global selinux_state and
+          # legacy three-argument SID conversion API. Upstream SUSFS assumes
+          # the newer per-filesystem state member and four-argument API.
+          selinuxfs = Path("security/selinux/selinuxfs.c")
+          source = selinuxfs.read_text()
+          source, state_count = re.subn(
+              r"struct selinux_state \\*state = fsi->state;",
+              "struct selinux_state *state = &selinux_state;",
+              source,
+          )
+          source, sid_count = re.subn(
+              r"security_sid_to_context\\(state,\\s*",
+              "security_sid_to_context(",
+              source,
+          )
+          if state_count != 2 or sid_count != 1:
+              raise SystemExit(
+                  f"Unexpected SUSFS selinuxfs API adaptation counts: "
+                  f"state={state_count}, sid={sid_count}"
+              )
+          selinuxfs.write_text(source)
+          print(f"Adapted vendor selinuxfs API: state={state_count}, sid={sid_count}")
+
+          # These helpers are only referenced by optional SUS_SU code, which
+          # is intentionally disabled in this BakaSU configuration.
+          susfs = Path("fs/susfs.c")
+          source = susfs.read_text()
+          source, switch_count = re.subn(
+              r"(?m)^static struct cred \\*susfs_switch_to_ksu_domain\\(",
+              "static __maybe_unused struct cred *susfs_switch_to_ksu_domain(",
+              source,
+          )
+          source, restore_count = re.subn(
+              r"(?m)^static void susfs_restore_creds\\(",
+              "static __maybe_unused void susfs_restore_creds(",
+              source,
+          )
+          if switch_count != 1 or restore_count != 1:
+              raise SystemExit(
+                  f"Unexpected optional SUSFS helper declarations: "
+                  f"switch={switch_count}, restore={restore_count}"
+              )
+          susfs.write_text(source)
+          print("Marked optional SUS_SU credential helpers as maybe-unused")
           PY
 
           rm -f security/selinux/avc.c.rej
