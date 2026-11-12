@@ -1,4 +1,4 @@
-name: Build arter97 Nothing Phone 2 Kernel with BakaSU + SUSFS
+name: Build arter97 Nothing Phone 2 Kernel with BakaSU + SUSFS (test build)
 
 on:
   workflow_dispatch:
