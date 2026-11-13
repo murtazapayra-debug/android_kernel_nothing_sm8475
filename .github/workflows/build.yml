@@ -445,6 +445,23 @@ jobs:
               raise SystemExit("Could not uniquely locate BakaSU manual-guard warning check")
           checker.write_text(source.replace(old, new))
           print("Updated BakaSU checker to flag only manual-only hook guards")
+
+          # Simonpunk SUSFS adds its own filename-based faccessat declaration.
+          # Keep the legacy userspace-pointer prototype Manual-Hook-only.
+          path = Path("fs/open.c")
+          source = path.read_text()
+          old = """#if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)
+          extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
+                                          int *mode, int *__unused_flags);
+          #endif"""
+          new = """#ifdef CONFIG_KSU_MANUAL_HOOK
+          extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
+                                          int *mode, int *__unused_flags);
+          #endif"""
+          if source.count(old) != 1:
+              raise SystemExit("Could not uniquely locate legacy faccessat prototype in fs/open.c")
+          path.write_text(source.replace(old, new))
+          print("Scoped legacy faccessat prototype to Manual Hook mode")
           PY
 
       - name: Prepare Pong defconfig
