@@ -158,6 +158,22 @@ jobs:
           print("Fixed disabled-preinit void stub")
           PY
 
+      - name: Disable BakaSU preinit runner for vendor execveat compatibility
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("KernelSU/kernel/preinit/preinit.c")
+          source = path.read_text()
+          old = "static bool ksu_preinit_enabled = true;"
+          new = "static bool ksu_preinit_enabled = false;"
+          count = source.count(old)
+          if count != 1:
+              raise SystemExit(f"Expected one BakaSU preinit default, found {count}")
+          path.write_text(source.replace(old, new))
+          print("Disabled optional BakaSU preinit runner by default for this vendor execveat path")
+          PY
+
       - name: Fetch Android 12 5.10 SUSFS implementation
         run: |
           set -euo pipefail
