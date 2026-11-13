@@ -446,21 +446,25 @@ jobs:
           checker.write_text(source.replace(old, new))
           print("Updated BakaSU checker to flag only manual-only hook guards")
 
-          # Simonpunk SUSFS adds its own filename-based faccessat declaration.
-          # Keep the legacy userspace-pointer prototype Manual-Hook-only.
+          # The SUSFS patch adds a filename-based faccessat hook. Keep the
+          # older userspace-pointer prototype limited to Manual Hook mode.
+          import re
           path = Path("fs/open.c")
           source = path.read_text()
-          old = """#if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)
-          extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
-                                          int *mode, int *__unused_flags);
-          #endif"""
-          new = """#ifdef CONFIG_KSU_MANUAL_HOOK
-          extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
-                                          int *mode, int *__unused_flags);
-          #endif"""
-          if source.count(old) != 1:
-              raise SystemExit("Could not uniquely locate legacy faccessat prototype in fs/open.c")
-          path.write_text(source.replace(old, new))
+          pattern = (
+              r"#if defined\\(CONFIG_KSU_MANUAL_HOOK\\) \\|\\| defined\\(CONFIG_KSU_SUSFS\\)\\n"
+              r"extern int ksu_handle_faccessat\\(int \\*dfd, const char __user \\*\\*filename_user,\\n"
+              r"\\s*int \\*mode, int \\*__unused_flags\\);\\n#endif"
+          )
+          replacement = (
+              "#ifdef CONFIG_KSU_MANUAL_HOOK\\n"
+              "extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,\\n"
+              "                                int *mode, int *__unused_flags);\\n#endif"
+          )
+          source, count = re.subn(pattern, replacement, source)
+          if count != 1:
+              raise SystemExit(f"Expected one legacy faccessat prototype to scope, found {count}")
+          path.write_text(source)
           print("Scoped legacy faccessat prototype to Manual Hook mode")
           PY
 
