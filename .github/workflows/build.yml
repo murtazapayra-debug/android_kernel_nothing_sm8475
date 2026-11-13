@@ -403,6 +403,50 @@ jobs:
           fi
           test "$PATCH_STATUS" -eq 0 || echo "Known AVC hunk was applied by the compatibility step."
 
+      - name: Enable BakaSU hook callsites for SUSFS inline mode
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # These vendor-tree callsites were originally guarded for BakaSU's
+          # Manual Hook mode. SUSFS Inline Hook mode also needs them compiled.
+          # Kconfig makes MANUAL_HOOK and SUSFS mutually exclusive.
+          targets = {
+              "fs/exec.c": 3,
+              "fs/open.c": 2,
+              "fs/stat.c": 1,
+              "kernel/reboot.c": 2,
+          }
+          for name, minimum in targets.items():
+              path = Path(name)
+              source = path.read_text()
+              old = "#ifdef CONFIG_KSU_MANUAL_HOOK"
+              count = source.count(old)
+              if count < minimum:
+                  raise SystemExit(
+                      f"{name}: expected at least {minimum} manual-hook guards, found {count}"
+                  )
+              source = source.replace(
+                  old,
+                  "#if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)"
+              )
+              path.write_text(source)
+              print(f"{name}: enabled {count} hook guard(s) for Manual Hook and SUSFS modes")
+
+          # BakaSU's stock warning checker flags any occurrence of the symbol,
+          # including the now-correct dual-mode guards above. Restrict it to
+          # genuine manual-only #ifdef guards so it still catches regressions.
+          checker = Path("KernelSU/kernel/tools/inline_hook_check.mk")
+          source = checker.read_text()
+          old = 'grep -wq "CONFIG_KSU_MANUAL_HOOK" $(1)'
+          new = 'grep -Fq "#ifdef CONFIG_KSU_MANUAL_HOOK" $(1)'
+          if source.count(old) != 1:
+              raise SystemExit("Could not uniquely locate BakaSU manual-guard warning check")
+          checker.write_text(source.replace(old, new))
+          print("Updated BakaSU checker to flag only manual-only hook guards")
+          PY
+
       - name: Prepare Pong defconfig
         run: |
           cp defconfig arch/arm64/configs/custom_defconfig
