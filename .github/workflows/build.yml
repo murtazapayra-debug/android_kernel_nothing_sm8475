@@ -414,7 +414,10 @@ jobs:
           # Kconfig makes MANUAL_HOOK and SUSFS mutually exclusive.
           targets = {
               "fs/exec.c": 3,
-              "fs/open.c": 2,
+              # fs/open.c intentionally stays Manual-Hook-only at its legacy
+              # userspace-pointer callsite. SUSFS adds its own filename-based
+              # hook inside do_faccessat; enabling the legacy callsite breaks
+              # the struct filename ** API.
               "fs/stat.c": 1,
               "kernel/reboot.c": 2,
           }
@@ -443,29 +446,17 @@ jobs:
           new = 'grep -Fq "#ifdef CONFIG_KSU_MANUAL_HOOK" $(1)'
           if source.count(old) != 1:
               raise SystemExit("Could not uniquely locate BakaSU manual-guard warning check")
-          checker.write_text(source.replace(old, new))
-          print("Updated BakaSU checker to flag only manual-only hook guards")
+          source = source.replace(old, new)
+          # The legacy fs/open.c callsite is intentionally retained for
+          # Manual Hook mode; SUSFS has a separate filename-based callsite.
+          # Do not classify this expected dual-API arrangement as broken.
+          open_guard = '$(eval $(call check_ksu_manual_guard,$(srctree)/fs/open.c))'
+          if source.count(open_guard) != 1:
+              raise SystemExit("Could not uniquely locate fs/open.c manual-guard check")
+          source = source.replace(open_guard, "# fs/open.c legacy Manual Hook guard is intentional with SUSFS")
+          checker.write_text(source)
+          print("Updated BakaSU checker for the intentional fs/open.c legacy guard")
 
-          # The SUSFS patch adds a filename-based faccessat hook. Keep the
-          # older userspace-pointer prototype limited to Manual Hook mode.
-          import re
-          path = Path("fs/open.c")
-          source = path.read_text()
-          pattern = (
-              r"#if defined\(CONFIG_KSU_MANUAL_HOOK\) \|\| defined\(CONFIG_KSU_SUSFS\)\n"
-              r"extern int ksu_handle_faccessat\(int \*dfd, const char __user \*\*filename_user,\n"
-              r"\s*int \*mode, int \*__unused_flags\);\n#endif"
-          )
-          replacement = (
-              "#ifdef CONFIG_KSU_MANUAL_HOOK\n"
-              "extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,\n"
-              "                                int *mode, int *__unused_flags);\n#endif"
-          )
-          source, count = re.subn(pattern, replacement, source)
-          if count != 1:
-              raise SystemExit(f"Expected one legacy faccessat prototype to scope, found {count}")
-          path.write_text(source)
-          print("Scoped legacy faccessat prototype to Manual Hook mode")
           PY
 
       - name: Prepare Pong defconfig
