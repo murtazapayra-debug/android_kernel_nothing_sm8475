@@ -414,11 +414,9 @@ jobs:
           # Kconfig makes MANUAL_HOOK and SUSFS mutually exclusive.
           targets = {
               "fs/exec.c": 3,
-              # fs/open.c intentionally stays Manual-Hook-only at its legacy
-              # userspace-pointer callsite. SUSFS adds its own filename-based
-              # hook inside do_faccessat; enabling the legacy callsite breaks
-              # the struct filename ** API.
-              "fs/stat.c": 1,
+              # fs/open.c and fs/stat.c retain legacy userspace-pointer
+              # callsites. SUSFS supplies separate filename-based hooks;
+              # enabling the legacy callsites causes incompatible pointer APIs.
               "kernel/reboot.c": 2,
           }
           for name, minimum in targets.items():
@@ -450,12 +448,16 @@ jobs:
           # The legacy fs/open.c callsite is intentionally retained for
           # Manual Hook mode; SUSFS has a separate filename-based callsite.
           # Do not classify this expected dual-API arrangement as broken.
-          open_guard = '$(eval $(call check_ksu_manual_guard,$(srctree)/fs/open.c))'
-          if source.count(open_guard) != 1:
-              raise SystemExit("Could not uniquely locate fs/open.c manual-guard check")
-          source = source.replace(open_guard, "# fs/open.c legacy Manual Hook guard is intentional with SUSFS")
+          for filename in ("fs/open.c", "fs/stat.c"):
+              guard = f'$(eval $(call check_ksu_manual_guard,$(srctree)/{filename}))'
+              if source.count(guard) != 1:
+                  raise SystemExit(f"Could not uniquely locate {filename} manual-guard check")
+              source = source.replace(
+                  guard,
+                  f"# {filename} legacy Manual Hook guard is intentional with SUSFS",
+              )
           checker.write_text(source)
-          print("Updated BakaSU checker for the intentional fs/open.c legacy guard")
+          print("Updated BakaSU checker for intentional legacy open/stat guards")
 
           PY
 
