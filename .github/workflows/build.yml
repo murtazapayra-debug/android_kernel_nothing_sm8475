@@ -452,14 +452,14 @@ jobs:
           path = Path("fs/open.c")
           source = path.read_text()
           pattern = (
-              r"#if defined\\(CONFIG_KSU_MANUAL_HOOK\\) \\|\\| defined\\(CONFIG_KSU_SUSFS\\)\\n"
-              r"extern int ksu_handle_faccessat\\(int \\*dfd, const char __user \\*\\*filename_user,\\n"
-              r"\\s*int \\*mode, int \\*__unused_flags\\);\\n#endif"
+              r"#if defined\(CONFIG_KSU_MANUAL_HOOK\) \|\| defined\(CONFIG_KSU_SUSFS\)\n"
+              r"extern int ksu_handle_faccessat\(int \*dfd, const char __user \*\*filename_user,\n"
+              r"\s*int \*mode, int \*__unused_flags\);\n#endif"
           )
           replacement = (
-              "#ifdef CONFIG_KSU_MANUAL_HOOK\\n"
-              "extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,\\n"
-              "                                int *mode, int *__unused_flags);\\n#endif"
+              "#ifdef CONFIG_KSU_MANUAL_HOOK\n"
+              "extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,\n"
+              "                                int *mode, int *__unused_flags);\n#endif"
           )
           source, count = re.subn(pattern, replacement, source)
           if count != 1:
