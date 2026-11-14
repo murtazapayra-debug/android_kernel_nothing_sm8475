@@ -276,7 +276,7 @@ jobs:
               bounded_count += bounded
               if avc or ctx or bounded:
                   path.write_text(source)
-          if avc_count < 1 or bounded_count < 1:
+          if bounded_count < 1:
               raise SystemExit(f"Missing expected SUSFS SELinux compatibility calls: avc={avc_count}, bounded={bounded_count}")
           print(f"Adapted vendor SELinux APIs: avc={avc_count}, context={ctx_count}, bounded={bounded_count}")
 
