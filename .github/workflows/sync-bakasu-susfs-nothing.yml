@@ -1,4 +1,4 @@
-name: Sync BakaSU-SUSFS with latest Nothing stock kernel
+name: Create clean Nothing stock base for BakaSU SUSFS
 
 on:
   push:
@@ -11,69 +11,125 @@ permissions:
   actions: write
 
 jobs:
-  sync:
+  prepare:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
-      - name: Checkout custom kernel branch with full history
+      - name: Checkout custom integration branch with history
         uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fetch latest Nothing Phone 2 stock kernel
+      - name: Fetch latest Nothing Phone 2 stock source
         shell: bash
         run: |
           set -euo pipefail
           git remote add nothing https://github.com/NothingOSS/android_kernel_msm-5.10_nothing_sm8475.git
           git fetch --no-tags nothing refs/heads/sm8475/b/mr:refs/remotes/nothing/sm8475/b/mr
-          echo "## Source revisions" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Custom branch before sync: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Nothing stock target: $(git rev-parse refs/remotes/nothing/sm8475/b/mr)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Stock commit: https://github.com/NothingOSS/android_kernel_msm-5.10_nothing_sm8475/commit/$(git rev-parse refs/remotes/nothing/sm8475/b/mr)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Kernel release target: Linux 5.10.252 / NothingOS 4.1" >> "$GITHUB_STEP_SUMMARY"
+          STOCK_SHA="$(git rev-parse refs/remotes/nothing/sm8475/b/mr)"
+          echo "STOCK_SHA=$STOCK_SHA" >> "$GITHUB_ENV"
+          echo "## Source" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Stock source: NothingOS 4.1 / Linux 5.10.252" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Stock commit: https://github.com/NothingOSS/android_kernel_msm-5.10_nothing_sm8475/commit/$STOCK_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Custom integration source: $(git rev-parse refs/remotes/origin/bakasu-susfs)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Merge Nothing stock changes without overwriting custom features
-        id: merge
+      - name: Create a fresh branch from Nothing stock and carry over integration files
         shell: bash
         run: |
           set -euo pipefail
+          TARGET_BRANCH="stock-bakasu-susfs-b4.1"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git merge --no-edit --no-ff refs/remotes/nothing/sm8475/b/mr -m "Merge latest NothingOS 4.1 stock kernel and upstream 5.10.252 updates"; then
-            echo "clean=true" >> "$GITHUB_OUTPUT"
-            echo "## Merge result" >> "$GITHUB_STEP_SUMMARY"
-            echo "Nothing stock source merged cleanly. Existing BakaSU/SUSFS commits and custom changes are retained." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "clean=false" >> "$GITHUB_OUTPUT"
-            {
-              echo "## Merge requires manual conflict resolution"
-              echo "The original bakasu-susfs branch was not modified. Conflicting paths:"
-              git diff --name-only --diff-filter=U || true
-              echo
-              echo "Merge status:"
-              git status --short
-            } >> "$GITHUB_STEP_SUMMARY"
-            git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt" || true
-            git merge --abort || true
-            exit 1
-          fi
 
-      - name: Push isolated updated branch
-        if: steps.merge.outputs.clean == 'true'
+          # Start from the actual Nothing stock commit. Do not merge the
+          # divergent Arter tree into it.
+          git checkout --force -B "$TARGET_BRANCH" "$STOCK_SHA"
+
+          mkdir -p .github/workflows
+          git show refs/remotes/origin/bakasu-susfs:defconfig > defconfig
+          git show refs/remotes/origin/bakasu-susfs:version > version
+          git show refs/remotes/origin/bakasu-susfs:.github/workflows/build.yml > .github/workflows/build.yml
+
+          # Identify this as a Nothing-stock-based port and package against
+          # the boot image matching the stock source revision.
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/build.yml")
+          source = path.read_text()
+          source = source.replace(
+              "Build arter97 Nothing Phone 2 Kernel with BakaSU + SUSFS",
+              "Build Nothing stock Phone 2 Kernel with BakaSU + SUSFS",
+          )
+          source = source.replace(
+              'CONFIG_LOCALVERSION="-arter97-$KERNEL_VERSION-bakasu-susfs"',
+              'CONFIG_LOCALVERSION="-nothing-stock-$KERNEL_VERSION-bakasu-susfs"',
+          )
+          source = source.replace("261014-1615", "260818-1726")
+          old = '''          STOCK_SHA256="8c0d9260e92a5df32e083e113113b790b127764ee2e95ddce77ebb4d0c6ab33e"
+          WORKDIR="$RUNNER_TEMP/pong-boot-package"
+          mkdir -p "$WORKDIR/stock"
+
+          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
+          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -'''
+          new = '''          WORKDIR="$RUNNER_TEMP/pong-boot-package"
+          mkdir -p "$WORKDIR/stock"
+
+          HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
+          HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
+          curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"
+          STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk '{print $1}')"
+          test -n "$STOCK_SHA256"
+          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
+          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -'''
+          if old not in source:
+              raise SystemExit("Could not find the exact stock boot checksum block; refusing to create a mismatched package workflow")
+          source = source.replace(old, new)
+          source = source.replace(
+              "Pong-BakaSU-SUSFS-B4.1-261014-1615-TEST-ONLY",
+              "Pong-BakaSU-SUSFS-NothingStock-B4.1-260818-1726-TEST-ONLY",
+          )
+          path.write_text(source)
+
+          Path("version").write_text("b4.1-260818-1726-stock\n")
+          PY
+
+          cat > PORTING_NOTES.md <<'EOF'
+          # Nothing stock BakaSU + SUSFS port
+
+          This branch is based directly on NothingOSS sm8475/b/mr (Linux 5.10.252).
+          It intentionally does not merge the divergent Arter kernel history.
+
+          The existing BakaSU/SUSFS build workflow and tested Pong defconfig are
+          carried over for the first compile-validation pass. Arter-only source
+          features, including charging-current control and vibration changes, are
+          not yet declared ported; they must be reviewed and applied as focused
+          patches against this stock base after the BakaSU/SUSFS baseline builds.
+          The packaged test boot image is pinned to the matching Pong B4.1-260818-1726
+          stock release and is TEST-ONLY.
+          EOF
+
+          git add .github/workflows/build.yml defconfig version PORTING_NOTES.md
+          git commit -m "Start BakaSU SUSFS port from NothingOS 4.1 stock 5.10.252"
+          echo "TARGET_BRANCH=$TARGET_BRANCH" >> "$GITHUB_ENV"
+          echo "## New stock-based branch" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Branch: $TARGET_BRANCH" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Parent: $(git rev-parse HEAD^)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push stock-based branch
         shell: bash
         run: |
           set -euo pipefail
-          git push origin HEAD:refs/heads/sync/bakasu-susfs-nothing-b4.1
-          echo "Pushed merge commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
 
-      - name: Start BakaSU-SUSFS build and boot-image validation
-        if: steps.merge.outputs.clean == 'true'
+      - name: Dispatch BakaSU SUSFS build on stock base
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          gh workflow run build.yml --ref sync/bakasu-susfs-nothing-b4.1
-          echo "Dispatched the existing BakaSU-SUSFS build workflow on the isolated sync branch." >> "$GITHUB_STEP_SUMMARY"
+          gh workflow run build.yml --ref "$TARGET_BRANCH"
+          echo "Dispatched BakaSU/SUSFS compile and matching stock boot-image validation." >> "$GITHUB_STEP_SUMMARY"
