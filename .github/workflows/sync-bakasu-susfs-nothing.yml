@@ -69,22 +69,30 @@ jobs:
           )
           source = source.replace("261014-1615", "260818-1726")
           import re
-          pattern = r'(?m)^[ \\t]*STOCK_SHA256="[^"]+"[ \\t]*\\n'
-          if not re.search(pattern, source):
-              raise SystemExit("Could not find STOCK_SHA256 assignment; refusing to create a mismatched package workflow")
-          source = re.sub(pattern, "", source, count=1)
-          source = source.replace(
-              '          mkdir -p "$WORKDIR/stock"\\n\\n          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"\\n          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -',
-              '''          mkdir -p "$WORKDIR/stock"
-
-          HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
-          HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
-          curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"
-          STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk '{print $1}')"
-          test -n "$STOCK_SHA256"
-          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
-          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -'''
-          )
+          source = re.sub(r'(?m)^[ \\t]*STOCK_SHA256="[^"]+"\\r?\\n', "", source, count=1)
+          lines = source.splitlines()
+          output = []
+          i = 0
+          while i < len(lines):
+              line = lines[i]
+              if (line.strip() == 'curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"'
+                      and i + 1 < len(lines)
+                      and lines[i + 1].strip() == 'echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -'):
+                  indent = line[:len(line) - len(line.lstrip())]
+                  output.extend([
+                      indent + 'HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"',
+                      indent + 'HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"',
+                      indent + 'curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"',
+                      indent + 'STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk \'{print $1}\')"',
+                      indent + 'test -n "$STOCK_SHA256"',
+                      indent + 'curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"',
+                      indent + 'echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -',
+                  ])
+                  i += 2
+                  continue
+              output.append(line)
+              i += 1
+          source = "\\n".join(output) + "\\n"
           source = source.replace(
               "Pong-BakaSU-SUSFS-B4.1-261014-1615-TEST-ONLY",
               "Pong-BakaSU-SUSFS-NothingStock-B4.1-260818-1726-TEST-ONLY",
