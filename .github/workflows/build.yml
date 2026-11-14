@@ -505,6 +505,33 @@ jobs:
           print("Updated BakaSU checker for intentional legacy open/stat guards")
           PY
 
+      - name: Remove unavailable scheduler feature toggle from stock WALT
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("kernel/sched/walt/walt.c")
+          source = path.read_text()
+          start = source.index("static void walt_init(struct work_struct *work)")
+          end = source.index("static DECLARE_WORK(&", start) if "static DECLARE_WORK(&" in source[start:] else source.index("static DECLARE_WORK(walt_init_work", start)
+          function = source[start:end]
+
+          declaration = "\tint i;\n"
+          block = """\ti = match_string(sched_feat_names, __SCHED_FEAT_NR, "TTWU_QUEUE");
+          \tif (i >= 0) {
+          \t\tstatic_key_disable(&sched_feat_keys[i]);
+          \t\tsysctl_sched_features &= ~(1UL << i);
+          \t}
+          """
+          if function.count(declaration) != 1:
+              raise SystemExit("Expected exactly one WALT local scheduler-feature index")
+          if function.count(block) != 1:
+              raise SystemExit("Expected exactly one incompatible TTWU_QUEUE feature toggle")
+          function = function.replace(declaration, "", 1).replace(block, "", 1)
+          path.write_text(source[:start] + function + source[end:])
+          print("Removed stock WALT references to unavailable sched_feat_* symbols")
+          PY
+
       - name: Prepare Pong defconfig
         run: |
           cp defconfig arch/arm64/configs/custom_defconfig
