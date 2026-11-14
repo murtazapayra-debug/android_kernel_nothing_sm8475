@@ -581,6 +581,18 @@ jobs:
           sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"-Pong-B4.1-bakasu-susfs\"|" arch/arm64/configs/custom_defconfig
           cat >> arch/arm64/configs/custom_defconfig <<'EOF'
 
+          # Enable SELinux explicitly: BakaSU preinit includes the vendor
+          # SELinux policy headers, whose SID table options otherwise vanish
+          # from autoconf.h when SELinux is disabled by the base defconfig.
+          CONFIG_SECURITY=y
+          CONFIG_SECURITY_NETWORK=y
+          CONFIG_AUDIT=y
+          CONFIG_NET=y
+          CONFIG_INET=y
+          CONFIG_SECURITY_SELINUX=y
+          CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS=9
+          CONFIG_SECURITY_SELINUX_SID2STR_CACHE_SIZE=256
+
           # BakaSU + SUSFS
           # SUSFS hook mode is mutually exclusive with BakaSU manual-hook mode.
           CONFIG_KSU=y
@@ -614,8 +626,1246 @@ jobs:
           # Resolve newly introduced Kconfig symbols non-interactively before
           # any later make target can unexpectedly enter Restart config mode.
           yes "" | make O=out oldconfig
-          grep -q '^CONFIG_KSU=y$' out/.config
-          grep -q '^CONFIG_KSU_SUSFS=y$' out/.config
+          grep -q '^CONFIG_SECURITY=y
+          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_UNAME=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_OPEN_REDIRECT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' out/.config
+
+      - name: Install kernel UAPI headers for BakaSU preinit
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out headers_install INSTALL_HDR_PATH=out/usr
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+          CROSS_COMPILE: aarch64-linux-gnu-
+          CC: ccache clang
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_MAXSIZE: 4G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
+        run: |
+          ccache --zero-stats
+          ccache --show-config
+          # Build SELinux's small host generator explicitly. The vendor Kbuild
+          # tree does not reliably descend into scripts/selinux/genheaders
+          # before BakaSU objects include security.h.
+          mkdir -p out/security/selinux
+          gcc -Iinclude/uapi -Iinclude -Isecurity/selinux/include \
+            scripts/selinux/genheaders/genheaders.c -o out/genheaders
+          test -x out/genheaders
+          out/genheaders out/security/selinux/flask.h out/security/selinux/av_permissions.h
+          test -s out/security/selinux/flask.h
+          test -s out/security/selinux/av_permissions.h
+          # Make the generated SELinux headers visible to BakaSU translation units.
+          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+          ccache --show-stats
+
+      - name: Package kernel into matching stock boot image
+        env:
+          ARCH: arm64
+        run: |
+          set -euo pipefail
+
+          STOCK_ARCHIVE="Pong_B4.1-260818-1726-image-boot.7z"
+          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/${STOCK_ARCHIVE}"
+          WORKDIR="$RUNNER_TEMP/pong-boot-package"
+          mkdir -p "$WORKDIR/stock"
+
+          HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
+          HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
+          curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"
+          STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk '{print $1}')"
+          test -n "$STOCK_SHA256"
+          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
+          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -
+
+          7z x -y "$WORKDIR/$STOCK_ARCHIVE" -o"$WORKDIR/stock" >/dev/null
+          STOCK_BOOT="$(find "$WORKDIR/stock" -type f -name boot.img -print -quit)"
+          test -n "$STOCK_BOOT"
+          test -s "$STOCK_BOOT"
+
+          # Use pinned AOSP/LineageOS boot-image utilities to retain stock
+          # command line, OS version, patch level, header and ramdisk settings.
+          git clone --quiet https://github.com/LineageOS/android_system_tools_mkbootimg.git "$WORKDIR/mkbootimg-tools"
+          git -C "$WORKDIR/mkbootimg-tools" checkout --quiet 808ecd09666ffe0ff5800f02af693abce56eb395
+
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/stock-unpacked" \
+            --format info | tee "$WORKDIR/stock-boot-info.txt"
+
+          HEADER_VERSION="$(awk -F': ' '/boot image header version:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+          case "$HEADER_VERSION" in
+            3|4) ;;
+            *) echo "Unsupported stock boot header version: $HEADER_VERSION"; exit 1 ;;
+          esac
+
+                    # The stock GKI boot signature is for VTS certification,
+          # not device-specific bootloader verification.
+          # A modified kernel cannot retain the original signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+            echo "Stock GKI boot signature: ${SIGNATURE_SIZE} bytes"
+            echo "The modified test image will be packaged without the stale GKI signature."
+          fi
+
+          # Replace only the boot partition's kernel payload. Keep the original
+          # stock ramdisk and all metadata extracted from this exact release.
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/stock-unpacked/kernel"
+          # Generate the mkbootimg argument list into a second directory
+          # so the first extraction (and its original ramdisk) stays intact.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/mkbootimg-inputs" \
+            --format mkbootimg -0 > "$WORKDIR/mkbootimg-args.bin"
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/mkbootimg-inputs/kernel"
+
+          mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
+          python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
+            "${MKBOOTIMG_ARGS[@]}" \
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img"
+
+          # Independently unpack the result and verify the kernel, ramdisk,
+          # header, OS version, patch level and kernel command line.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            --out "$WORKDIR/repacked-unpacked" \
+            --format info | tee "$WORKDIR/repacked-boot-info.txt"
+
+          cmp out/arch/arm64/boot/Image.gz "$WORKDIR/repacked-unpacked/kernel"
+          # Verify that the output does not contain a stale GKI signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            OUTPUT_SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/repacked-boot-info.txt")"
+            test "$OUTPUT_SIGNATURE_SIZE" = "0"
+            echo "Verified: output boot signature size is 0."
+          fi
+          cmp "$WORKDIR/stock-unpacked/ramdisk" "$WORKDIR/repacked-unpacked/ramdisk"
+
+          for field in "os version" "os patch level" "boot image header version" "command line args"; do
+            grep -F "$field:" "$WORKDIR/stock-boot-info.txt" > "$WORKDIR/stock-field.txt"
+            grep -F "$field:" "$WORKDIR/repacked-boot-info.txt" > "$WORKDIR/repacked-field.txt"
+            cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
+          done
+
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img")"
+          test "$BOOT_SIZE" -le 134217728
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256"
+
+      - name: Upload kernel and test boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-BakaSU-SUSFS-B4.1-260818-1726-TEST-ONLY
+          path: |
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          grep -q '^CONFIG_SECURITY_NETWORK=y
+          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_UNAME=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_OPEN_REDIRECT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' out/.config
+
+      - name: Install kernel UAPI headers for BakaSU preinit
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out headers_install INSTALL_HDR_PATH=out/usr
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+          CROSS_COMPILE: aarch64-linux-gnu-
+          CC: ccache clang
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_MAXSIZE: 4G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
+        run: |
+          ccache --zero-stats
+          ccache --show-config
+          # Build SELinux's small host generator explicitly. The vendor Kbuild
+          # tree does not reliably descend into scripts/selinux/genheaders
+          # before BakaSU objects include security.h.
+          mkdir -p out/security/selinux
+          gcc -Iinclude/uapi -Iinclude -Isecurity/selinux/include \
+            scripts/selinux/genheaders/genheaders.c -o out/genheaders
+          test -x out/genheaders
+          out/genheaders out/security/selinux/flask.h out/security/selinux/av_permissions.h
+          test -s out/security/selinux/flask.h
+          test -s out/security/selinux/av_permissions.h
+          # Make the generated SELinux headers visible to BakaSU translation units.
+          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+          ccache --show-stats
+
+      - name: Package kernel into matching stock boot image
+        env:
+          ARCH: arm64
+        run: |
+          set -euo pipefail
+
+          STOCK_ARCHIVE="Pong_B4.1-260818-1726-image-boot.7z"
+          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/${STOCK_ARCHIVE}"
+          WORKDIR="$RUNNER_TEMP/pong-boot-package"
+          mkdir -p "$WORKDIR/stock"
+
+          HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
+          HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
+          curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"
+          STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk '{print $1}')"
+          test -n "$STOCK_SHA256"
+          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
+          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -
+
+          7z x -y "$WORKDIR/$STOCK_ARCHIVE" -o"$WORKDIR/stock" >/dev/null
+          STOCK_BOOT="$(find "$WORKDIR/stock" -type f -name boot.img -print -quit)"
+          test -n "$STOCK_BOOT"
+          test -s "$STOCK_BOOT"
+
+          # Use pinned AOSP/LineageOS boot-image utilities to retain stock
+          # command line, OS version, patch level, header and ramdisk settings.
+          git clone --quiet https://github.com/LineageOS/android_system_tools_mkbootimg.git "$WORKDIR/mkbootimg-tools"
+          git -C "$WORKDIR/mkbootimg-tools" checkout --quiet 808ecd09666ffe0ff5800f02af693abce56eb395
+
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/stock-unpacked" \
+            --format info | tee "$WORKDIR/stock-boot-info.txt"
+
+          HEADER_VERSION="$(awk -F': ' '/boot image header version:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+          case "$HEADER_VERSION" in
+            3|4) ;;
+            *) echo "Unsupported stock boot header version: $HEADER_VERSION"; exit 1 ;;
+          esac
+
+                    # The stock GKI boot signature is for VTS certification,
+          # not device-specific bootloader verification.
+          # A modified kernel cannot retain the original signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+            echo "Stock GKI boot signature: ${SIGNATURE_SIZE} bytes"
+            echo "The modified test image will be packaged without the stale GKI signature."
+          fi
+
+          # Replace only the boot partition's kernel payload. Keep the original
+          # stock ramdisk and all metadata extracted from this exact release.
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/stock-unpacked/kernel"
+          # Generate the mkbootimg argument list into a second directory
+          # so the first extraction (and its original ramdisk) stays intact.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/mkbootimg-inputs" \
+            --format mkbootimg -0 > "$WORKDIR/mkbootimg-args.bin"
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/mkbootimg-inputs/kernel"
+
+          mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
+          python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
+            "${MKBOOTIMG_ARGS[@]}" \
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img"
+
+          # Independently unpack the result and verify the kernel, ramdisk,
+          # header, OS version, patch level and kernel command line.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            --out "$WORKDIR/repacked-unpacked" \
+            --format info | tee "$WORKDIR/repacked-boot-info.txt"
+
+          cmp out/arch/arm64/boot/Image.gz "$WORKDIR/repacked-unpacked/kernel"
+          # Verify that the output does not contain a stale GKI signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            OUTPUT_SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/repacked-boot-info.txt")"
+            test "$OUTPUT_SIGNATURE_SIZE" = "0"
+            echo "Verified: output boot signature size is 0."
+          fi
+          cmp "$WORKDIR/stock-unpacked/ramdisk" "$WORKDIR/repacked-unpacked/ramdisk"
+
+          for field in "os version" "os patch level" "boot image header version" "command line args"; do
+            grep -F "$field:" "$WORKDIR/stock-boot-info.txt" > "$WORKDIR/stock-field.txt"
+            grep -F "$field:" "$WORKDIR/repacked-boot-info.txt" > "$WORKDIR/repacked-field.txt"
+            cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
+          done
+
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img")"
+          test "$BOOT_SIZE" -le 134217728
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256"
+
+      - name: Upload kernel and test boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-BakaSU-SUSFS-B4.1-260818-1726-TEST-ONLY
+          path: |
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          grep -q '^CONFIG_AUDIT=y
+          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_UNAME=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_OPEN_REDIRECT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' out/.config
+
+      - name: Install kernel UAPI headers for BakaSU preinit
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out headers_install INSTALL_HDR_PATH=out/usr
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+          CROSS_COMPILE: aarch64-linux-gnu-
+          CC: ccache clang
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_MAXSIZE: 4G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
+        run: |
+          ccache --zero-stats
+          ccache --show-config
+          # Build SELinux's small host generator explicitly. The vendor Kbuild
+          # tree does not reliably descend into scripts/selinux/genheaders
+          # before BakaSU objects include security.h.
+          mkdir -p out/security/selinux
+          gcc -Iinclude/uapi -Iinclude -Isecurity/selinux/include \
+            scripts/selinux/genheaders/genheaders.c -o out/genheaders
+          test -x out/genheaders
+          out/genheaders out/security/selinux/flask.h out/security/selinux/av_permissions.h
+          test -s out/security/selinux/flask.h
+          test -s out/security/selinux/av_permissions.h
+          # Make the generated SELinux headers visible to BakaSU translation units.
+          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+          ccache --show-stats
+
+      - name: Package kernel into matching stock boot image
+        env:
+          ARCH: arm64
+        run: |
+          set -euo pipefail
+
+          STOCK_ARCHIVE="Pong_B4.1-260818-1726-image-boot.7z"
+          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/${STOCK_ARCHIVE}"
+          WORKDIR="$RUNNER_TEMP/pong-boot-package"
+          mkdir -p "$WORKDIR/stock"
+
+          HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
+          HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
+          curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"
+          STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk '{print $1}')"
+          test -n "$STOCK_SHA256"
+          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
+          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -
+
+          7z x -y "$WORKDIR/$STOCK_ARCHIVE" -o"$WORKDIR/stock" >/dev/null
+          STOCK_BOOT="$(find "$WORKDIR/stock" -type f -name boot.img -print -quit)"
+          test -n "$STOCK_BOOT"
+          test -s "$STOCK_BOOT"
+
+          # Use pinned AOSP/LineageOS boot-image utilities to retain stock
+          # command line, OS version, patch level, header and ramdisk settings.
+          git clone --quiet https://github.com/LineageOS/android_system_tools_mkbootimg.git "$WORKDIR/mkbootimg-tools"
+          git -C "$WORKDIR/mkbootimg-tools" checkout --quiet 808ecd09666ffe0ff5800f02af693abce56eb395
+
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/stock-unpacked" \
+            --format info | tee "$WORKDIR/stock-boot-info.txt"
+
+          HEADER_VERSION="$(awk -F': ' '/boot image header version:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+          case "$HEADER_VERSION" in
+            3|4) ;;
+            *) echo "Unsupported stock boot header version: $HEADER_VERSION"; exit 1 ;;
+          esac
+
+                    # The stock GKI boot signature is for VTS certification,
+          # not device-specific bootloader verification.
+          # A modified kernel cannot retain the original signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+            echo "Stock GKI boot signature: ${SIGNATURE_SIZE} bytes"
+            echo "The modified test image will be packaged without the stale GKI signature."
+          fi
+
+          # Replace only the boot partition's kernel payload. Keep the original
+          # stock ramdisk and all metadata extracted from this exact release.
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/stock-unpacked/kernel"
+          # Generate the mkbootimg argument list into a second directory
+          # so the first extraction (and its original ramdisk) stays intact.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/mkbootimg-inputs" \
+            --format mkbootimg -0 > "$WORKDIR/mkbootimg-args.bin"
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/mkbootimg-inputs/kernel"
+
+          mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
+          python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
+            "${MKBOOTIMG_ARGS[@]}" \
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img"
+
+          # Independently unpack the result and verify the kernel, ramdisk,
+          # header, OS version, patch level and kernel command line.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            --out "$WORKDIR/repacked-unpacked" \
+            --format info | tee "$WORKDIR/repacked-boot-info.txt"
+
+          cmp out/arch/arm64/boot/Image.gz "$WORKDIR/repacked-unpacked/kernel"
+          # Verify that the output does not contain a stale GKI signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            OUTPUT_SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/repacked-boot-info.txt")"
+            test "$OUTPUT_SIGNATURE_SIZE" = "0"
+            echo "Verified: output boot signature size is 0."
+          fi
+          cmp "$WORKDIR/stock-unpacked/ramdisk" "$WORKDIR/repacked-unpacked/ramdisk"
+
+          for field in "os version" "os patch level" "boot image header version" "command line args"; do
+            grep -F "$field:" "$WORKDIR/stock-boot-info.txt" > "$WORKDIR/stock-field.txt"
+            grep -F "$field:" "$WORKDIR/repacked-boot-info.txt" > "$WORKDIR/repacked-field.txt"
+            cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
+          done
+
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img")"
+          test "$BOOT_SIZE" -le 134217728
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256"
+
+      - name: Upload kernel and test boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-BakaSU-SUSFS-B4.1-260818-1726-TEST-ONLY
+          path: |
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          grep -q '^CONFIG_SECURITY_SELINUX=y
+          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_UNAME=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_OPEN_REDIRECT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' out/.config
+
+      - name: Install kernel UAPI headers for BakaSU preinit
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out headers_install INSTALL_HDR_PATH=out/usr
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+          CROSS_COMPILE: aarch64-linux-gnu-
+          CC: ccache clang
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_MAXSIZE: 4G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
+        run: |
+          ccache --zero-stats
+          ccache --show-config
+          # Build SELinux's small host generator explicitly. The vendor Kbuild
+          # tree does not reliably descend into scripts/selinux/genheaders
+          # before BakaSU objects include security.h.
+          mkdir -p out/security/selinux
+          gcc -Iinclude/uapi -Iinclude -Isecurity/selinux/include \
+            scripts/selinux/genheaders/genheaders.c -o out/genheaders
+          test -x out/genheaders
+          out/genheaders out/security/selinux/flask.h out/security/selinux/av_permissions.h
+          test -s out/security/selinux/flask.h
+          test -s out/security/selinux/av_permissions.h
+          # Make the generated SELinux headers visible to BakaSU translation units.
+          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+          ccache --show-stats
+
+      - name: Package kernel into matching stock boot image
+        env:
+          ARCH: arm64
+        run: |
+          set -euo pipefail
+
+          STOCK_ARCHIVE="Pong_B4.1-260818-1726-image-boot.7z"
+          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/${STOCK_ARCHIVE}"
+          WORKDIR="$RUNNER_TEMP/pong-boot-package"
+          mkdir -p "$WORKDIR/stock"
+
+          HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
+          HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
+          curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"
+          STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk '{print $1}')"
+          test -n "$STOCK_SHA256"
+          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
+          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -
+
+          7z x -y "$WORKDIR/$STOCK_ARCHIVE" -o"$WORKDIR/stock" >/dev/null
+          STOCK_BOOT="$(find "$WORKDIR/stock" -type f -name boot.img -print -quit)"
+          test -n "$STOCK_BOOT"
+          test -s "$STOCK_BOOT"
+
+          # Use pinned AOSP/LineageOS boot-image utilities to retain stock
+          # command line, OS version, patch level, header and ramdisk settings.
+          git clone --quiet https://github.com/LineageOS/android_system_tools_mkbootimg.git "$WORKDIR/mkbootimg-tools"
+          git -C "$WORKDIR/mkbootimg-tools" checkout --quiet 808ecd09666ffe0ff5800f02af693abce56eb395
+
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/stock-unpacked" \
+            --format info | tee "$WORKDIR/stock-boot-info.txt"
+
+          HEADER_VERSION="$(awk -F': ' '/boot image header version:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+          case "$HEADER_VERSION" in
+            3|4) ;;
+            *) echo "Unsupported stock boot header version: $HEADER_VERSION"; exit 1 ;;
+          esac
+
+                    # The stock GKI boot signature is for VTS certification,
+          # not device-specific bootloader verification.
+          # A modified kernel cannot retain the original signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+            echo "Stock GKI boot signature: ${SIGNATURE_SIZE} bytes"
+            echo "The modified test image will be packaged without the stale GKI signature."
+          fi
+
+          # Replace only the boot partition's kernel payload. Keep the original
+          # stock ramdisk and all metadata extracted from this exact release.
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/stock-unpacked/kernel"
+          # Generate the mkbootimg argument list into a second directory
+          # so the first extraction (and its original ramdisk) stays intact.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/mkbootimg-inputs" \
+            --format mkbootimg -0 > "$WORKDIR/mkbootimg-args.bin"
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/mkbootimg-inputs/kernel"
+
+          mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
+          python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
+            "${MKBOOTIMG_ARGS[@]}" \
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img"
+
+          # Independently unpack the result and verify the kernel, ramdisk,
+          # header, OS version, patch level and kernel command line.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            --out "$WORKDIR/repacked-unpacked" \
+            --format info | tee "$WORKDIR/repacked-boot-info.txt"
+
+          cmp out/arch/arm64/boot/Image.gz "$WORKDIR/repacked-unpacked/kernel"
+          # Verify that the output does not contain a stale GKI signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            OUTPUT_SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/repacked-boot-info.txt")"
+            test "$OUTPUT_SIGNATURE_SIZE" = "0"
+            echo "Verified: output boot signature size is 0."
+          fi
+          cmp "$WORKDIR/stock-unpacked/ramdisk" "$WORKDIR/repacked-unpacked/ramdisk"
+
+          for field in "os version" "os patch level" "boot image header version" "command line args"; do
+            grep -F "$field:" "$WORKDIR/stock-boot-info.txt" > "$WORKDIR/stock-field.txt"
+            grep -F "$field:" "$WORKDIR/repacked-boot-info.txt" > "$WORKDIR/repacked-field.txt"
+            cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
+          done
+
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img")"
+          test "$BOOT_SIZE" -le 134217728
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256"
+
+      - name: Upload kernel and test boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-BakaSU-SUSFS-B4.1-260818-1726-TEST-ONLY
+          path: |
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          grep -q '^CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS=9
+          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_UNAME=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_OPEN_REDIRECT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' out/.config
+
+      - name: Install kernel UAPI headers for BakaSU preinit
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out headers_install INSTALL_HDR_PATH=out/usr
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+          CROSS_COMPILE: aarch64-linux-gnu-
+          CC: ccache clang
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_MAXSIZE: 4G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
+        run: |
+          ccache --zero-stats
+          ccache --show-config
+          # Build SELinux's small host generator explicitly. The vendor Kbuild
+          # tree does not reliably descend into scripts/selinux/genheaders
+          # before BakaSU objects include security.h.
+          mkdir -p out/security/selinux
+          gcc -Iinclude/uapi -Iinclude -Isecurity/selinux/include \
+            scripts/selinux/genheaders/genheaders.c -o out/genheaders
+          test -x out/genheaders
+          out/genheaders out/security/selinux/flask.h out/security/selinux/av_permissions.h
+          test -s out/security/selinux/flask.h
+          test -s out/security/selinux/av_permissions.h
+          # Make the generated SELinux headers visible to BakaSU translation units.
+          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+          ccache --show-stats
+
+      - name: Package kernel into matching stock boot image
+        env:
+          ARCH: arm64
+        run: |
+          set -euo pipefail
+
+          STOCK_ARCHIVE="Pong_B4.1-260818-1726-image-boot.7z"
+          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/${STOCK_ARCHIVE}"
+          WORKDIR="$RUNNER_TEMP/pong-boot-package"
+          mkdir -p "$WORKDIR/stock"
+
+          HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
+          HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
+          curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"
+          STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk '{print $1}')"
+          test -n "$STOCK_SHA256"
+          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
+          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -
+
+          7z x -y "$WORKDIR/$STOCK_ARCHIVE" -o"$WORKDIR/stock" >/dev/null
+          STOCK_BOOT="$(find "$WORKDIR/stock" -type f -name boot.img -print -quit)"
+          test -n "$STOCK_BOOT"
+          test -s "$STOCK_BOOT"
+
+          # Use pinned AOSP/LineageOS boot-image utilities to retain stock
+          # command line, OS version, patch level, header and ramdisk settings.
+          git clone --quiet https://github.com/LineageOS/android_system_tools_mkbootimg.git "$WORKDIR/mkbootimg-tools"
+          git -C "$WORKDIR/mkbootimg-tools" checkout --quiet 808ecd09666ffe0ff5800f02af693abce56eb395
+
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/stock-unpacked" \
+            --format info | tee "$WORKDIR/stock-boot-info.txt"
+
+          HEADER_VERSION="$(awk -F': ' '/boot image header version:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+          case "$HEADER_VERSION" in
+            3|4) ;;
+            *) echo "Unsupported stock boot header version: $HEADER_VERSION"; exit 1 ;;
+          esac
+
+                    # The stock GKI boot signature is for VTS certification,
+          # not device-specific bootloader verification.
+          # A modified kernel cannot retain the original signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+            echo "Stock GKI boot signature: ${SIGNATURE_SIZE} bytes"
+            echo "The modified test image will be packaged without the stale GKI signature."
+          fi
+
+          # Replace only the boot partition's kernel payload. Keep the original
+          # stock ramdisk and all metadata extracted from this exact release.
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/stock-unpacked/kernel"
+          # Generate the mkbootimg argument list into a second directory
+          # so the first extraction (and its original ramdisk) stays intact.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/mkbootimg-inputs" \
+            --format mkbootimg -0 > "$WORKDIR/mkbootimg-args.bin"
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/mkbootimg-inputs/kernel"
+
+          mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
+          python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
+            "${MKBOOTIMG_ARGS[@]}" \
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img"
+
+          # Independently unpack the result and verify the kernel, ramdisk,
+          # header, OS version, patch level and kernel command line.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            --out "$WORKDIR/repacked-unpacked" \
+            --format info | tee "$WORKDIR/repacked-boot-info.txt"
+
+          cmp out/arch/arm64/boot/Image.gz "$WORKDIR/repacked-unpacked/kernel"
+          # Verify that the output does not contain a stale GKI signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            OUTPUT_SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/repacked-boot-info.txt")"
+            test "$OUTPUT_SIGNATURE_SIZE" = "0"
+            echo "Verified: output boot signature size is 0."
+          fi
+          cmp "$WORKDIR/stock-unpacked/ramdisk" "$WORKDIR/repacked-unpacked/ramdisk"
+
+          for field in "os version" "os patch level" "boot image header version" "command line args"; do
+            grep -F "$field:" "$WORKDIR/stock-boot-info.txt" > "$WORKDIR/stock-field.txt"
+            grep -F "$field:" "$WORKDIR/repacked-boot-info.txt" > "$WORKDIR/repacked-field.txt"
+            cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
+          done
+
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img")"
+          test "$BOOT_SIZE" -le 134217728
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256"
+
+      - name: Upload kernel and test boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-BakaSU-SUSFS-B4.1-260818-1726-TEST-ONLY
+          path: |
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          grep -q '^CONFIG_SECURITY_SELINUX_SID2STR_CACHE_SIZE=256
+          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_UNAME=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_OPEN_REDIRECT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' out/.config
+
+      - name: Install kernel UAPI headers for BakaSU preinit
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out headers_install INSTALL_HDR_PATH=out/usr
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+          CROSS_COMPILE: aarch64-linux-gnu-
+          CC: ccache clang
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_MAXSIZE: 4G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
+        run: |
+          ccache --zero-stats
+          ccache --show-config
+          # Build SELinux's small host generator explicitly. The vendor Kbuild
+          # tree does not reliably descend into scripts/selinux/genheaders
+          # before BakaSU objects include security.h.
+          mkdir -p out/security/selinux
+          gcc -Iinclude/uapi -Iinclude -Isecurity/selinux/include \
+            scripts/selinux/genheaders/genheaders.c -o out/genheaders
+          test -x out/genheaders
+          out/genheaders out/security/selinux/flask.h out/security/selinux/av_permissions.h
+          test -s out/security/selinux/flask.h
+          test -s out/security/selinux/av_permissions.h
+          # Make the generated SELinux headers visible to BakaSU translation units.
+          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+          ccache --show-stats
+
+      - name: Package kernel into matching stock boot image
+        env:
+          ARCH: arm64
+        run: |
+          set -euo pipefail
+
+          STOCK_ARCHIVE="Pong_B4.1-260818-1726-image-boot.7z"
+          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/${STOCK_ARCHIVE}"
+          WORKDIR="$RUNNER_TEMP/pong-boot-package"
+          mkdir -p "$WORKDIR/stock"
+
+          HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
+          HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
+          curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"
+          STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk '{print $1}')"
+          test -n "$STOCK_SHA256"
+          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
+          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -
+
+          7z x -y "$WORKDIR/$STOCK_ARCHIVE" -o"$WORKDIR/stock" >/dev/null
+          STOCK_BOOT="$(find "$WORKDIR/stock" -type f -name boot.img -print -quit)"
+          test -n "$STOCK_BOOT"
+          test -s "$STOCK_BOOT"
+
+          # Use pinned AOSP/LineageOS boot-image utilities to retain stock
+          # command line, OS version, patch level, header and ramdisk settings.
+          git clone --quiet https://github.com/LineageOS/android_system_tools_mkbootimg.git "$WORKDIR/mkbootimg-tools"
+          git -C "$WORKDIR/mkbootimg-tools" checkout --quiet 808ecd09666ffe0ff5800f02af693abce56eb395
+
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/stock-unpacked" \
+            --format info | tee "$WORKDIR/stock-boot-info.txt"
+
+          HEADER_VERSION="$(awk -F': ' '/boot image header version:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+          case "$HEADER_VERSION" in
+            3|4) ;;
+            *) echo "Unsupported stock boot header version: $HEADER_VERSION"; exit 1 ;;
+          esac
+
+                    # The stock GKI boot signature is for VTS certification,
+          # not device-specific bootloader verification.
+          # A modified kernel cannot retain the original signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+            echo "Stock GKI boot signature: ${SIGNATURE_SIZE} bytes"
+            echo "The modified test image will be packaged without the stale GKI signature."
+          fi
+
+          # Replace only the boot partition's kernel payload. Keep the original
+          # stock ramdisk and all metadata extracted from this exact release.
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/stock-unpacked/kernel"
+          # Generate the mkbootimg argument list into a second directory
+          # so the first extraction (and its original ramdisk) stays intact.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/mkbootimg-inputs" \
+            --format mkbootimg -0 > "$WORKDIR/mkbootimg-args.bin"
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/mkbootimg-inputs/kernel"
+
+          mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
+          python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
+            "${MKBOOTIMG_ARGS[@]}" \
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img"
+
+          # Independently unpack the result and verify the kernel, ramdisk,
+          # header, OS version, patch level and kernel command line.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            --out "$WORKDIR/repacked-unpacked" \
+            --format info | tee "$WORKDIR/repacked-boot-info.txt"
+
+          cmp out/arch/arm64/boot/Image.gz "$WORKDIR/repacked-unpacked/kernel"
+          # Verify that the output does not contain a stale GKI signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            OUTPUT_SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/repacked-boot-info.txt")"
+            test "$OUTPUT_SIGNATURE_SIZE" = "0"
+            echo "Verified: output boot signature size is 0."
+          fi
+          cmp "$WORKDIR/stock-unpacked/ramdisk" "$WORKDIR/repacked-unpacked/ramdisk"
+
+          for field in "os version" "os patch level" "boot image header version" "command line args"; do
+            grep -F "$field:" "$WORKDIR/stock-boot-info.txt" > "$WORKDIR/stock-field.txt"
+            grep -F "$field:" "$WORKDIR/repacked-boot-info.txt" > "$WORKDIR/repacked-field.txt"
+            cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
+          done
+
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img")"
+          test "$BOOT_SIZE" -le 134217728
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256"
+
+      - name: Upload kernel and test boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-BakaSU-SUSFS-B4.1-260818-1726-TEST-ONLY
+          path: |
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          grep -q '^CONFIG_KSU=y
+          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_UNAME=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_OPEN_REDIRECT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' out/.config
+
+      - name: Install kernel UAPI headers for BakaSU preinit
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out headers_install INSTALL_HDR_PATH=out/usr
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+          CROSS_COMPILE: aarch64-linux-gnu-
+          CC: ccache clang
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_MAXSIZE: 4G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
+        run: |
+          ccache --zero-stats
+          ccache --show-config
+          # Build SELinux's small host generator explicitly. The vendor Kbuild
+          # tree does not reliably descend into scripts/selinux/genheaders
+          # before BakaSU objects include security.h.
+          mkdir -p out/security/selinux
+          gcc -Iinclude/uapi -Iinclude -Isecurity/selinux/include \
+            scripts/selinux/genheaders/genheaders.c -o out/genheaders
+          test -x out/genheaders
+          out/genheaders out/security/selinux/flask.h out/security/selinux/av_permissions.h
+          test -s out/security/selinux/flask.h
+          test -s out/security/selinux/av_permissions.h
+          # Make the generated SELinux headers visible to BakaSU translation units.
+          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+          ccache --show-stats
+
+      - name: Package kernel into matching stock boot image
+        env:
+          ARCH: arm64
+        run: |
+          set -euo pipefail
+
+          STOCK_ARCHIVE="Pong_B4.1-260818-1726-image-boot.7z"
+          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/${STOCK_ARCHIVE}"
+          WORKDIR="$RUNNER_TEMP/pong-boot-package"
+          mkdir -p "$WORKDIR/stock"
+
+          HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
+          HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
+          curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"
+          STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk '{print $1}')"
+          test -n "$STOCK_SHA256"
+          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
+          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -
+
+          7z x -y "$WORKDIR/$STOCK_ARCHIVE" -o"$WORKDIR/stock" >/dev/null
+          STOCK_BOOT="$(find "$WORKDIR/stock" -type f -name boot.img -print -quit)"
+          test -n "$STOCK_BOOT"
+          test -s "$STOCK_BOOT"
+
+          # Use pinned AOSP/LineageOS boot-image utilities to retain stock
+          # command line, OS version, patch level, header and ramdisk settings.
+          git clone --quiet https://github.com/LineageOS/android_system_tools_mkbootimg.git "$WORKDIR/mkbootimg-tools"
+          git -C "$WORKDIR/mkbootimg-tools" checkout --quiet 808ecd09666ffe0ff5800f02af693abce56eb395
+
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/stock-unpacked" \
+            --format info | tee "$WORKDIR/stock-boot-info.txt"
+
+          HEADER_VERSION="$(awk -F': ' '/boot image header version:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+          case "$HEADER_VERSION" in
+            3|4) ;;
+            *) echo "Unsupported stock boot header version: $HEADER_VERSION"; exit 1 ;;
+          esac
+
+                    # The stock GKI boot signature is for VTS certification,
+          # not device-specific bootloader verification.
+          # A modified kernel cannot retain the original signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+            echo "Stock GKI boot signature: ${SIGNATURE_SIZE} bytes"
+            echo "The modified test image will be packaged without the stale GKI signature."
+          fi
+
+          # Replace only the boot partition's kernel payload. Keep the original
+          # stock ramdisk and all metadata extracted from this exact release.
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/stock-unpacked/kernel"
+          # Generate the mkbootimg argument list into a second directory
+          # so the first extraction (and its original ramdisk) stays intact.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/mkbootimg-inputs" \
+            --format mkbootimg -0 > "$WORKDIR/mkbootimg-args.bin"
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/mkbootimg-inputs/kernel"
+
+          mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
+          python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
+            "${MKBOOTIMG_ARGS[@]}" \
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img"
+
+          # Independently unpack the result and verify the kernel, ramdisk,
+          # header, OS version, patch level and kernel command line.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            --out "$WORKDIR/repacked-unpacked" \
+            --format info | tee "$WORKDIR/repacked-boot-info.txt"
+
+          cmp out/arch/arm64/boot/Image.gz "$WORKDIR/repacked-unpacked/kernel"
+          # Verify that the output does not contain a stale GKI signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            OUTPUT_SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/repacked-boot-info.txt")"
+            test "$OUTPUT_SIGNATURE_SIZE" = "0"
+            echo "Verified: output boot signature size is 0."
+          fi
+          cmp "$WORKDIR/stock-unpacked/ramdisk" "$WORKDIR/repacked-unpacked/ramdisk"
+
+          for field in "os version" "os patch level" "boot image header version" "command line args"; do
+            grep -F "$field:" "$WORKDIR/stock-boot-info.txt" > "$WORKDIR/stock-field.txt"
+            grep -F "$field:" "$WORKDIR/repacked-boot-info.txt" > "$WORKDIR/repacked-field.txt"
+            cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
+          done
+
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img")"
+          test "$BOOT_SIZE" -le 134217728
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256"
+
+      - name: Upload kernel and test boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-BakaSU-SUSFS-B4.1-260818-1726-TEST-ONLY
+          path: |
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
+          grep -q '^CONFIG_KSU_SUSFS=y
+          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_UNAME=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_OPEN_REDIRECT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' out/.config
+
+      - name: Install kernel UAPI headers for BakaSU preinit
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out headers_install INSTALL_HDR_PATH=out/usr
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+          CROSS_COMPILE: aarch64-linux-gnu-
+          CC: ccache clang
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_MAXSIZE: 4G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
+        run: |
+          ccache --zero-stats
+          ccache --show-config
+          # Build SELinux's small host generator explicitly. The vendor Kbuild
+          # tree does not reliably descend into scripts/selinux/genheaders
+          # before BakaSU objects include security.h.
+          mkdir -p out/security/selinux
+          gcc -Iinclude/uapi -Iinclude -Isecurity/selinux/include \
+            scripts/selinux/genheaders/genheaders.c -o out/genheaders
+          test -x out/genheaders
+          out/genheaders out/security/selinux/flask.h out/security/selinux/av_permissions.h
+          test -s out/security/selinux/flask.h
+          test -s out/security/selinux/av_permissions.h
+          # Make the generated SELinux headers visible to BakaSU translation units.
+          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+          ccache --show-stats
+
+      - name: Package kernel into matching stock boot image
+        env:
+          ARCH: arm64
+        run: |
+          set -euo pipefail
+
+          STOCK_ARCHIVE="Pong_B4.1-260818-1726-image-boot.7z"
+          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/${STOCK_ARCHIVE}"
+          WORKDIR="$RUNNER_TEMP/pong-boot-package"
+          mkdir -p "$WORKDIR/stock"
+
+          HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
+          HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
+          curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"
+          STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk '{print $1}')"
+          test -n "$STOCK_SHA256"
+          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
+          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -
+
+          7z x -y "$WORKDIR/$STOCK_ARCHIVE" -o"$WORKDIR/stock" >/dev/null
+          STOCK_BOOT="$(find "$WORKDIR/stock" -type f -name boot.img -print -quit)"
+          test -n "$STOCK_BOOT"
+          test -s "$STOCK_BOOT"
+
+          # Use pinned AOSP/LineageOS boot-image utilities to retain stock
+          # command line, OS version, patch level, header and ramdisk settings.
+          git clone --quiet https://github.com/LineageOS/android_system_tools_mkbootimg.git "$WORKDIR/mkbootimg-tools"
+          git -C "$WORKDIR/mkbootimg-tools" checkout --quiet 808ecd09666ffe0ff5800f02af693abce56eb395
+
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/stock-unpacked" \
+            --format info | tee "$WORKDIR/stock-boot-info.txt"
+
+          HEADER_VERSION="$(awk -F': ' '/boot image header version:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+          case "$HEADER_VERSION" in
+            3|4) ;;
+            *) echo "Unsupported stock boot header version: $HEADER_VERSION"; exit 1 ;;
+          esac
+
+                    # The stock GKI boot signature is for VTS certification,
+          # not device-specific bootloader verification.
+          # A modified kernel cannot retain the original signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+            echo "Stock GKI boot signature: ${SIGNATURE_SIZE} bytes"
+            echo "The modified test image will be packaged without the stale GKI signature."
+          fi
+
+          # Replace only the boot partition's kernel payload. Keep the original
+          # stock ramdisk and all metadata extracted from this exact release.
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/stock-unpacked/kernel"
+          # Generate the mkbootimg argument list into a second directory
+          # so the first extraction (and its original ramdisk) stays intact.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/mkbootimg-inputs" \
+            --format mkbootimg -0 > "$WORKDIR/mkbootimg-args.bin"
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/mkbootimg-inputs/kernel"
+
+          mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
+          python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
+            "${MKBOOTIMG_ARGS[@]}" \
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img"
+
+          # Independently unpack the result and verify the kernel, ramdisk,
+          # header, OS version, patch level and kernel command line.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            --out "$WORKDIR/repacked-unpacked" \
+            --format info | tee "$WORKDIR/repacked-boot-info.txt"
+
+          cmp out/arch/arm64/boot/Image.gz "$WORKDIR/repacked-unpacked/kernel"
+          # Verify that the output does not contain a stale GKI signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            OUTPUT_SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/repacked-boot-info.txt")"
+            test "$OUTPUT_SIGNATURE_SIZE" = "0"
+            echo "Verified: output boot signature size is 0."
+          fi
+          cmp "$WORKDIR/stock-unpacked/ramdisk" "$WORKDIR/repacked-unpacked/ramdisk"
+
+          for field in "os version" "os patch level" "boot image header version" "command line args"; do
+            grep -F "$field:" "$WORKDIR/stock-boot-info.txt" > "$WORKDIR/stock-field.txt"
+            grep -F "$field:" "$WORKDIR/repacked-boot-info.txt" > "$WORKDIR/repacked-field.txt"
+            cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
+          done
+
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img")"
+          test "$BOOT_SIZE" -le 134217728
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256"
+
+      - name: Upload kernel and test boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-BakaSU-SUSFS-B4.1-260818-1726-TEST-ONLY
+          path: |
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
+ out/.config
           grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' out/.config
           grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' out/.config
           grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' out/.config
