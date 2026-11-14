@@ -413,11 +413,13 @@ jobs:
               source = insert_once(source, entry, hook, "do_execveat_common entry")
 
           if "ksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags, &retval);" not in source:
-              # fs/exec.c has multiple out_ret labels; scope the match to
-              # do_execveat_common rather than requiring a file-wide unique hit.
-              function_start = source.index("static int do_execveat_common(")
-              function_end = source.index("int kernel_execve(", function_start)
-              function_source = source[function_start:function_end]
+              # Select the cleanup label immediately before kernel_execve.
+              # This avoids assumptions about the exact function signature.
+              function_end = source.index("int kernel_execve(")
+              exit_pos = source.rfind("out_ret:", 0, function_end)
+              if exit_pos < 0:
+                  raise SystemExit("Could not locate do_execveat_common cleanup label")
+              tail = source[exit_pos:function_end]
               exit_anchor = """out_ret:
           \tputname(filename);
           \treturn retval;
@@ -429,10 +431,8 @@ jobs:
           \tputname(filename);
           \treturn retval;
           """
-              function_source = insert_once(
-                  function_source, exit_anchor, exit_hook, "do_execveat_common exit"
-              )
-              source = source[:function_start] + function_source + source[function_end:]
+              tail = insert_once(tail, exit_anchor, exit_hook, "do_execveat_common exit")
+              source = source[:exit_pos] + tail + source[function_end:]
           exec_path.write_text(source)
 
           reboot_path = Path("kernel/reboot.c")
