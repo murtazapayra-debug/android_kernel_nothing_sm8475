@@ -581,6 +581,17 @@ jobs:
           sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"-Pong-B4.1-bakasu-susfs\"|" arch/arm64/configs/custom_defconfig
           cat >> arch/arm64/configs/custom_defconfig <<'EOF'
 
+          # Enable SELinux explicitly: BakaSU preinit includes vendor SELinux
+          # policy headers, so its SID-table Kconfig values must be generated.
+          CONFIG_SECURITY=y
+          CONFIG_SECURITY_NETWORK=y
+          CONFIG_AUDIT=y
+          CONFIG_NET=y
+          CONFIG_INET=y
+          CONFIG_SECURITY_SELINUX=y
+          CONFIG_SECURITY_SELINUX_SIDTAB_HASH_BITS=9
+          CONFIG_SECURITY_SELINUX_SID2STR_CACHE_SIZE=256
+
           # BakaSU + SUSFS
           # SUSFS hook mode is mutually exclusive with BakaSU manual-hook mode.
           CONFIG_KSU=y
