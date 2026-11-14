@@ -68,14 +68,14 @@ jobs:
               'CONFIG_LOCALVERSION="-nothing-stock-$KERNEL_VERSION-bakasu-susfs"',
           )
           source = source.replace("261014-1615", "260818-1726")
-          old = '''          STOCK_SHA256="8c0d9260e92a5df32e083e113113b790b127764ee2e95ddce77ebb4d0c6ab33e"
-          WORKDIR="$RUNNER_TEMP/pong-boot-package"
-          mkdir -p "$WORKDIR/stock"
-
-          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
-          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -'''
-          new = '''          WORKDIR="$RUNNER_TEMP/pong-boot-package"
-          mkdir -p "$WORKDIR/stock"
+          import re
+          pattern = r'(?m)^[ \\t]*STOCK_SHA256="[^"]+"[ \\t]*\\n'
+          if not re.search(pattern, source):
+              raise SystemExit("Could not find STOCK_SHA256 assignment; refusing to create a mismatched package workflow")
+          source = re.sub(pattern, "", source, count=1)
+          source = source.replace(
+              '          mkdir -p "$WORKDIR/stock"\\n\\n          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"\\n          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -',
+              '''          mkdir -p "$WORKDIR/stock"
 
           HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
           HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
@@ -84,9 +84,7 @@ jobs:
           test -n "$STOCK_SHA256"
           curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
           echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -'''
-          if old not in source:
-              raise SystemExit("Could not find the exact stock boot checksum block; refusing to create a mismatched package workflow")
-          source = source.replace(old, new)
+          )
           source = source.replace(
               "Pong-BakaSU-SUSFS-B4.1-261014-1615-TEST-ONLY",
               "Pong-BakaSU-SUSFS-NothingStock-B4.1-260818-1726-TEST-ONLY",
