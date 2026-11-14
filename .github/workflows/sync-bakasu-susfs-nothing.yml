@@ -133,7 +133,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          # This branch is a generated clean-stock build branch. Rebuild it
+          # from the current stock tip and replace only its previous generated tip.
+          git fetch origin "$TARGET_BRANCH"
+          OLD_TARGET_SHA="$(git rev-parse "refs/remotes/origin/$TARGET_BRANCH")"
+          git push --force-with-lease="refs/heads/$TARGET_BRANCH:$OLD_TARGET_SHA" origin "HEAD:refs/heads/$TARGET_BRANCH"
 
       - name: Dispatch BakaSU SUSFS build on stock base
         env:
