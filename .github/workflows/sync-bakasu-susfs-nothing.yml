@@ -35,7 +35,7 @@ jobs:
           echo "- Stock commit: https://github.com/NothingOSS/android_kernel_msm-5.10_nothing_sm8475/commit/$STOCK_SHA" >> "$GITHUB_STEP_SUMMARY"
           echo "- Custom integration source: $(git rev-parse refs/remotes/origin/bakasu-susfs)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Create a fresh branch from Nothing stock and carry over integration files
+      - name: Create a fresh stock branch with the latest vendor-aware BakaSU SUSFS workflow
         shell: bash
         run: |
           set -euo pipefail
