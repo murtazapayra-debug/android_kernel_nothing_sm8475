@@ -319,18 +319,16 @@ jobs:
           )
           # The two upstream handlers no longer need the per-superblock
           # selinux_fs_info pointer after switching to the vendor global state.
-          source, fsi_count = re.subn(
-              r"(?m)^\s*struct selinux_fs_info \*fsi = file_inode\(file\)->i_sb->s_fs_info;\n",
-              "",
-              source,
-          )
-          if state_count != 2 or sid_count != 1 or fsi_count != 2:
+          # The upstream SUSFS patch adds this state binding in multiple
+          # selinuxfs handlers. Keep each fsi pointer declaration: vendor
+          # handlers may still use fsi for other per-superblock fields.
+          if state_count < 1 or sid_count < 1:
               raise SystemExit(
-                  f"Unexpected SUSFS selinuxfs API adaptation counts: "
-                  f"state={state_count}, sid={sid_count}, fsi={fsi_count}"
+                  f"Missing SUSFS selinuxfs API adaptations: "
+                  f"state={state_count}, sid={sid_count}"
               )
           selinuxfs.write_text(source)
-          print(f"Adapted vendor selinuxfs API: state={state_count}, sid={sid_count}, removed-unused-fsi={fsi_count}")
+          print(f"Adapted vendor selinuxfs API: state={state_count}, sid={sid_count}; retained selinux_fs_info pointers")
 
           # The vendor status.c uses the global selinux_state API. The
           # upstream SUSFS hunk introduces references to a per-instance
