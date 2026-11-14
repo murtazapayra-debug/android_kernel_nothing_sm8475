@@ -1,0 +1,660 @@
+name: Build Nothing stock Phone 2 Kernel with BakaSU + SUSFS (AVC fix) (test build)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - bakasu-susfs
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Pong kernel with BakaSU + SUSFS
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Restore LLVM toolchain cache
+        id: llvm-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/llvm
+          key: llvm-22.1.0-ubuntu-22.04-x86_64
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-clang-22.1.0-${{ hashFiles('defconfig', 'version') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-clang-22.1.0-${{ hashFiles('defconfig', 'version') }}-
+            ccache-${{ runner.os }}-clang-22.1.0-
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex git gnupg gperf \
+            libncurses5-dev libssl-dev libxml2 libxml2-utils lzop rsync \
+            schedtool squashfs-tools xsltproc zip zlib1g-dev python3 \
+            libelf-dev lz4 cpio fakeroot dwarves p7zip-full
+
+      - name: Install LLVM 22.1.0
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$HOME/llvm"
+          curl -fL --retry 3 https://www.kernel.org/pub/tools/llvm/files/llvm-22.1.0-x86_64.tar.gz -o llvm.tar.gz
+          tar -xzf llvm.tar.gz -C "$HOME/llvm" --strip-components=1
+          rm llvm.tar.gz
+
+      - name: Configure cached LLVM path
+        run: |
+          test -x "$HOME/llvm/bin/clang"
+          echo "$HOME/llvm/bin" >> "$GITHUB_PATH"
+          echo "LLVM_PATH=$HOME/llvm/bin/" >> "$GITHUB_ENV"
+
+      - name: Integrate pinned BakaSU source
+        run: |
+          curl -fLSs https://raw.githubusercontent.com/Baka-SU/BakaSU/516d3e87fbc986ccefdde2c2765f1700612441a9/kernel/setup.sh -o setup-bakasu.sh
+          bash setup-bakasu.sh 516d3e87fbc986ccefdde2c2765f1700612441a9
+
+      - name: Adapt BakaSU SELinux helpers to this vendor 5.10 tree
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          source_path = Path("KernelSU/kernel/feature/selinux_hide.c")
+          source = source_path.read_text()
+
+          # This NothingOS 5.10 tree has selinux_state, but its avc/security
+          # helper prototypes are the legacy no-state variants. BakaSU's
+          # version-based compatibility macro incorrectly prepends
+          # &selinux_state for these two calls.
+          source, avc_count = re.subn(
+              r"^#define ksu_avc_has_perm_compat\(\.\.\.\) avc_has_perm\(&selinux_state, __VA_ARGS__\)$",
+              "#define ksu_avc_has_perm_compat(...) avc_has_perm(__VA_ARGS__)",
+              source,
+              flags=re.MULTILINE,
+          )
+          source, transition_count = re.subn(
+              r"^#define ksu_security_bounded_transition_compat\(\.\.\.\) security_bounded_transition\(&selinux_state, __VA_ARGS__\)$",
+              "#define ksu_security_bounded_transition_compat(...) security_bounded_transition(__VA_ARGS__)",
+              source,
+              flags=re.MULTILINE,
+          )
+
+          # This kernel's sidtab cache API has a fifth 'alloc' parameter.
+          source, sidtab_count = re.subn(
+              r"sidtab_sid2str_get\(sidtab, entry, scontext, scontext_len\)",
+              "sidtab_sid2str_get(sidtab, entry, scontext, scontext_len, true)",
+              source,
+          )
+
+          if (avc_count != 1 or transition_count != 1 or sidtab_count != 1):
+              raise SystemExit(
+                  "BakaSU SELinux compatibility patch did not match expected source "
+                  f"(avc={avc_count}, transition={transition_count}, sidtab={sidtab_count})"
+              )
+
+          source_path.write_text(source)
+          print("Applied vendor 5.10 SELinux helper compatibility fixes")
+          PY
+
+      - name: Fix BakaSU SELinux AVC reset for selinux_policy layout
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          rules = Path("KernelSU/kernel/selinux/rules.c")
+          source = rules.read_text()
+          old = "#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))"
+          new = "#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0) || defined(SELINUX_POLICY_INSTEAD_SELINUX_SS))"
+          count = source.count(old)
+          if count != 2:
+              raise SystemExit(f"Expected 2 BakaSU AVC reset guards, found {count}")
+          rules.write_text(source.replace(old, new))
+          print("Selected the SELINUX_POLICY_INSTEAD_SELINUX_SS AVC reset API")
+          PY
+
+      - name: Fix BakaSU disabled-preinit stub for void manual hook
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          header = Path("KernelSU/kernel/preinit/preinit.h")
+          source = header.read_text()
+          old = """static inline void ksu_preinit_handle_execve_manual(const char **filename, struct user_arg_ptr *argv)
+          {
+              return false;
+          }"""
+          new = """static inline void ksu_preinit_handle_execve_manual(const char **filename, struct user_arg_ptr *argv)
+          {
+              return;
+          }"""
+          if source.count(old) != 1:
+              raise SystemExit("Expected BakaSU manual-preinit stub was not found exactly once")
+          header.write_text(source.replace(old, new))
+          print("Fixed disabled-preinit void stub")
+          PY
+
+      - name: Disable BakaSU preinit runner for vendor execveat compatibility
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("KernelSU/kernel/preinit/preinit.c")
+          source = path.read_text()
+          old = "static bool ksu_preinit_enabled = true;"
+          new = "static bool ksu_preinit_enabled = false;"
+          count = source.count(old)
+          if count != 1:
+              raise SystemExit(f"Expected one BakaSU preinit default, found {count}")
+          path.write_text(source.replace(old, new))
+          print("Disabled optional BakaSU preinit runner by default for this vendor execveat path")
+          PY
+
+      - name: Fetch Android 12 5.10 SUSFS implementation
+        run: |
+          set -euo pipefail
+          git clone --depth=1 --branch gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+          PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch"
+          test -s "$PATCH"
+          test -s susfs4ksu/kernel_patches/fs/susfs.c
+          test -s susfs4ksu/kernel_patches/include/linux/susfs.h
+          test -s susfs4ksu/kernel_patches/include/linux/susfs_def.h
+          echo "SUSFS source revision: $(git -C susfs4ksu rev-parse HEAD)"
+
+      - name: Apply SUSFS kernel patches
+        run: |
+          set -euo pipefail
+          cp susfs4ksu/kernel_patches/fs/susfs.c fs/
+          cp susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+          cp susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/
+          PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch"
+          echo "Applying Android 12 / Linux 5.10 SUSFS patch to arter97 r45b2."
+          set +e
+          patch --batch --fuzz=3 -p1 < "$PATCH"
+          PATCH_STATUS=$?
+          set -e
+          if [ "$PATCH_STATUS" -ne 0 ]; then
+            echo "Upstream patch has a known vendor SELinux AVC hunk mismatch; validating and applying that hunk manually."
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          avc = Path("security/selinux/avc.c")
+          source = avc.read_text()
+          old = '''\trc = security_sid_to_context_stack(sad->tsid, &scontext,
+          \t\t\t\t     &scontext_len);
+          \tif (rc)
+          \t\taudit_log_format(ab, " tsid=%d", sad->tsid);
+          \telse
+          \t\taudit_log_format(ab, " tcontext=%s", scontext);
+
+          \taudit_log_format(ab, " tclass=%s", secclass_map[sad->tclass-1].name);'''
+          new = '''\trc = security_sid_to_context_stack(sad->tsid, &scontext,
+          \t\t\t\t     &scontext_len);
+          # SUSFS AVC-log spoofing for the vendor tree's stack-based SID API.
+          # The upstream patch uses security_sid_to_context(sad->state, ...),
+          # which is not the API exposed by this NothingOS 5.10 source.
+          #ifdef_placeholder
+          if (unlikely(sad->tsid == susfs_ksu_sid && susfs_is_avc_log_spoofing_enabled)) {
+          \tif (rc)
+          \t\taudit_log_format(ab, " tsid=%d", susfs_kernel_sid);
+          \telse
+          \t\taudit_log_format(ab, " tcontext=%s", "u:r:kernel:s0");
+          \tgoto bypass_orig_flow;
+          }
+          #endif_placeholder
+          \tif (rc)
+          \t\taudit_log_format(ab, " tsid=%d", sad->tsid);
+          \telse
+          \t\taudit_log_format(ab, " tcontext=%s", scontext);
+
+          #ifdef_placeholder
+          bypass_orig_flow:
+          #endif_placeholder
+          \taudit_log_format(ab, " tclass=%s", secclass_map[sad->tclass-1].name);'''
+          match_count = source.count(old)
+          if match_count == 1:
+              # Arter97's AVC callback uses the vendor stack-based SID API.
+              new = new.replace("#ifdef_placeholder", "#ifdef CONFIG_KSU_SUSFS").replace("#endif_placeholder", "#endif")
+              avc.write_text(source.replace(old, new))
+              print("Applied vendor-compatible SUSFS AVC spoofing hook")
+          elif "susfs_ksu_sid" in source and "susfs_is_avc_log_spoofing_enabled" in source:
+              # On the Nothing stock tree, the upstream SUSFS patch can apply
+              # its AVC hunk directly. In that case the Arter97 fallback block
+              # is no longer present and must not be applied a second time.
+              print("SUSFS AVC spoofing hunk is already present; skipped Arter97-only fallback")
+          else:
+              raise SystemExit(
+                  "SUSFS AVC hunk is neither already applied nor compatible with "
+                  f"the Arter97 fallback (legacy block matches={match_count})"
+              )
+          PY
+
+          # Upstream SUSFS uses newer SELinux helper signatures; adapt only
+          # calls that actually pass selinux_state, including multiline calls.
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          selinux_sources = list(Path("security/selinux").rglob("*.c"))
+          avc_count = ctx_count = bounded_count = 0
+          for path in selinux_sources:
+              source = path.read_text()
+              source, avc = re.subn(r'avc_has_perm\(\s*&selinux_state\s*,\s*', 'avc_has_perm(', source)
+              source, ctx = re.subn(r'security_context_to_sid_force\(\s*&selinux_state\s*,\s*', 'security_context_to_sid_force(', source)
+              source, bounded = re.subn(r'security_bounded_transition\(\s*&selinux_state\s*,\s*', 'security_bounded_transition(', source)
+              avc_count += avc
+              ctx_count += ctx
+              bounded_count += bounded
+              if avc or ctx or bounded:
+                  path.write_text(source)
+          if avc_count < 1 or bounded_count < 1:
+              raise SystemExit(f"Missing expected SUSFS SELinux compatibility calls: avc={avc_count}, bounded={bounded_count}")
+          print(f"Adapted vendor SELinux APIs: avc={avc_count}, context={ctx_count}, bounded={bounded_count}")
+
+          # Only do_execveat_common owns stack-allocated bprm and needs &bprm.
+          # Other free_bprm callers (for example fill_bprm) receive a pointer.
+          path = Path("fs/exec.c")
+          source = path.read_text()
+          begin = source.index("static int do_execveat_common(")
+          finish = source.index(chr(10) + "int kernel_execve(", begin)
+          function = source[begin:finish]
+          old = "free_bprm(bprm);"
+          new = "free_bprm(&bprm);"
+          pointer_calls = function.count(old)
+          stack_calls = function.count(new)
+          # The SUSFS patch leaves two cleanup paths in this function. Both
+          # own the stack-allocated bprm object and must pass its address.
+          if pointer_calls + stack_calls != 2:
+              raise SystemExit(
+                  f"Unexpected do_execveat_common cleanup count: "
+                  f"pointer={pointer_calls}, stack={stack_calls}"
+              )
+          function = function.replace(old, new)
+          if function.count(new) != 2:
+              raise SystemExit("Failed to normalize both stack bprm cleanup calls")
+          source = source[:begin] + function + source[finish:]
+          path.write_text(source)
+          print("Verified both do_execveat_common cleanup paths use free_bprm(&bprm); other callers unchanged.")
+
+          # The vendor SELinux filesystem uses the global selinux_state and
+          # legacy three-argument SID conversion API. Upstream SUSFS assumes
+          # the newer per-filesystem state member and four-argument API.
+          selinuxfs = Path("security/selinux/selinuxfs.c")
+          source = selinuxfs.read_text()
+          source, state_count = re.subn(
+              r"struct selinux_state \*state = fsi->state;",
+              "struct selinux_state *state = &selinux_state;",
+              source,
+          )
+          source, sid_count = re.subn(
+              r"security_sid_to_context\(state,\s*",
+              "security_sid_to_context(",
+              source,
+          )
+          # The two upstream handlers no longer need the per-superblock
+          # selinux_fs_info pointer after switching to the vendor global state.
+          source, fsi_count = re.subn(
+              r"(?m)^\s*struct selinux_fs_info \*fsi = file_inode\(file\)->i_sb->s_fs_info;\n",
+              "",
+              source,
+          )
+          if state_count != 2 or sid_count != 1 or fsi_count != 2:
+              raise SystemExit(
+                  f"Unexpected SUSFS selinuxfs API adaptation counts: "
+                  f"state={state_count}, sid={sid_count}, fsi={fsi_count}"
+              )
+          selinuxfs.write_text(source)
+          print(f"Adapted vendor selinuxfs API: state={state_count}, sid={sid_count}, removed-unused-fsi={fsi_count}")
+
+          # The vendor status.c uses the global selinux_state API. The
+          # upstream SUSFS hunk introduces references to a per-instance
+          # local named state, which this vendor tree does not provide.
+          status = Path("security/selinux/status.c")
+          source = status.read_text()
+          source, lock_count = re.subn(
+              r"state->status_lock",
+              "selinux_state.status_lock",
+              source,
+          )
+          source, allow_count = re.subn(
+              r"security_get_allow_unknown\(state\)",
+              "security_get_allow_unknown()",
+              source,
+          )
+          if lock_count != 2 or allow_count != 1:
+              raise SystemExit(
+                  f"Unexpected vendor status.c SUSFS adaptation counts: "
+                  f"status_lock={lock_count}, allow_unknown={allow_count}"
+              )
+          status.write_text(source)
+          print(
+              "Adapted SUSFS SELinux status code to global state: "
+              f"status_lock={lock_count}, allow_unknown={allow_count}"
+          )
+
+          # This vendor kernel exposes selinux_initialized() as a no-argument
+          # helper backed by the global selinux_state. The upstream SUSFS
+          # hunk assumes the newer per-state argument.
+          services = Path("security/selinux/ss/services.c")
+          source = services.read_text()
+          source, initialized_count = re.subn(
+              r"selinux_initialized\(state\)",
+              "selinux_initialized()",
+              source,
+          )
+          if initialized_count != 2:
+              raise SystemExit(
+                  "Unexpected SUSFS services.c initialization API count: "
+                  f"{initialized_count}"
+              )
+          services.write_text(source)
+          print(
+              "Adapted SUSFS services.c to vendor selinux_initialized(): "
+              f"{initialized_count} calls"
+          )
+
+          # These helpers are only referenced by optional SUS_SU code, which
+          # is intentionally disabled in this BakaSU configuration.
+          susfs = Path("fs/susfs.c")
+          source = susfs.read_text()
+          source, switch_count = re.subn(
+              r"(?m)^static struct cred \*susfs_switch_to_ksu_domain\(",
+              "static __maybe_unused struct cred *susfs_switch_to_ksu_domain(",
+              source,
+          )
+          source, restore_count = re.subn(
+              r"(?m)^static void susfs_restore_creds\(",
+              "static __maybe_unused void susfs_restore_creds(",
+              source,
+          )
+          if switch_count != 1 or restore_count != 1:
+              raise SystemExit(
+                  f"Unexpected optional SUSFS helper declarations: "
+                  f"switch={switch_count}, restore={restore_count}"
+              )
+          susfs.write_text(source)
+          print("Marked optional SUS_SU credential helpers as maybe-unused")
+          PY
+
+          rm -f security/selinux/avc.c.rej
+          grep -q 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' fs/Makefile
+          test -s fs/susfs.c
+          test -s include/linux/susfs.h
+          test -s include/linux/susfs_def.h
+          if find . -name '*.rej' -print -quit | grep -q .; then
+            echo "::error::SUSFS patch left rejected hunks after vendor adaptation."
+            find . -name '*.rej' -print
+            exit 1
+          fi
+          test "$PATCH_STATUS" -eq 0 || echo "Known AVC hunk was applied by the compatibility step."
+
+      - name: Enable BakaSU hook callsites for SUSFS inline mode
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # These vendor-tree callsites were originally guarded for BakaSU's
+          # Manual Hook mode. SUSFS Inline Hook mode also needs them compiled.
+          # Kconfig makes MANUAL_HOOK and SUSFS mutually exclusive.
+          targets = {
+              "fs/exec.c": 3,
+              # fs/open.c and fs/stat.c retain legacy userspace-pointer
+              # callsites. SUSFS supplies separate filename-based hooks;
+              # enabling the legacy callsites causes incompatible pointer APIs.
+              "kernel/reboot.c": 2,
+          }
+          for name, minimum in targets.items():
+              path = Path(name)
+              source = path.read_text()
+              old = "#ifdef CONFIG_KSU_MANUAL_HOOK"
+              count = source.count(old)
+              if count < minimum:
+                  raise SystemExit(
+                      f"{name}: expected at least {minimum} manual-hook guards, found {count}"
+                  )
+              source = source.replace(
+                  old,
+                  "#if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)"
+              )
+              path.write_text(source)
+              print(f"{name}: enabled {count} hook guard(s) for Manual Hook and SUSFS modes")
+
+          # BakaSU's stock warning checker flags any occurrence of the symbol,
+          # including the now-correct dual-mode guards above. Restrict it to
+          # genuine manual-only #ifdef guards so it still catches regressions.
+          checker = Path("KernelSU/kernel/tools/inline_hook_check.mk")
+          source = checker.read_text()
+          old = 'grep -wq "CONFIG_KSU_MANUAL_HOOK" $(1)'
+          new = 'grep -Fq "#ifdef CONFIG_KSU_MANUAL_HOOK" $(1)'
+          if source.count(old) != 1:
+              raise SystemExit("Could not uniquely locate BakaSU manual-guard warning check")
+          source = source.replace(old, new)
+          # The legacy fs/open.c callsite is intentionally retained for
+          # Manual Hook mode; SUSFS has a separate filename-based callsite.
+          # Do not classify this expected dual-API arrangement as broken.
+          for filename in ("fs/open.c", "fs/stat.c"):
+              guard = f'$(eval $(call check_ksu_manual_guard,$(srctree)/{filename}))'
+              if source.count(guard) != 1:
+                  raise SystemExit(f"Could not uniquely locate {filename} manual-guard check")
+              source = source.replace(
+                  guard,
+                  f"# {filename} legacy Manual Hook guard is intentional with SUSFS",
+              )
+          checker.write_text(source)
+          print("Updated BakaSU checker for intentional legacy open/stat guards")
+
+          PY
+
+      - name: Prepare Pong defconfig
+        run: |
+          cp defconfig arch/arm64/configs/custom_defconfig
+
+          # Resolve the source version from the repository root. Do not embed
+          # $(cat version) in CONFIG_LOCALVERSION: with O=out, Kbuild evaluates
+          # that command from the output directory, where the file is absent.
+          KERNEL_VERSION="$(tr -d '\r\n' < version)"
+          test -n "$KERNEL_VERSION"
+          sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"-arter97-$KERNEL_VERSION-bakasu-susfs\"|" arch/arm64/configs/custom_defconfig
+          cat >> arch/arm64/configs/custom_defconfig <<'EOF'
+
+          # BakaSU + SUSFS
+          # SUSFS hook mode is mutually exclusive with BakaSU manual-hook mode.
+          CONFIG_KSU=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_SUSFS_SUS_MAP=y
+          EOF
+
+      - name: Verify LLVM toolchain
+        run: |
+          test -x "$HOME/llvm/bin/clang"
+          command -v clang
+          clang --version | head -n 1
+          echo "LLVM_PATH=$LLVM_PATH"
+
+      - name: Configure and verify BakaSU
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out custom_defconfig
+          make O=out olddefconfig
+          grep -q '^CONFIG_KSU=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_UNAME=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_OPEN_REDIRECT=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' out/.config
+          ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y$' out/.config
+          ! grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' out/.config
+
+      - name: Install kernel UAPI headers for BakaSU preinit
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+        run: |
+          make O=out headers_install INSTALL_HDR_PATH=out/usr
+          test -f out/usr/include/linux/unistd.h
+
+      - name: Build kernel Image.gz
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+          CC: ccache clang
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_MAXSIZE: 4G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
+        run: |
+          ccache --zero-stats
+          ccache --show-config
+          make -j"$(nproc --all)" O=out Image.gz
+          test -s out/arch/arm64/boot/Image.gz
+          ccache --show-stats
+
+      - name: Package kernel into matching stock boot image
+        env:
+          ARCH: arm64
+        run: |
+          set -euo pipefail
+
+          STOCK_ARCHIVE="Pong_B4.1-260818-1726-image-boot.7z"
+          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/${STOCK_ARCHIVE}"
+          WORKDIR="$RUNNER_TEMP/pong-boot-package"
+          mkdir -p "$WORKDIR/stock"
+
+          HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
+          HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
+          curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"
+          STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk '{print $1}')"
+          test -n "$STOCK_SHA256"
+          curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
+          echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -
+
+          7z x -y "$WORKDIR/$STOCK_ARCHIVE" -o"$WORKDIR/stock" >/dev/null
+          STOCK_BOOT="$(find "$WORKDIR/stock" -type f -name boot.img -print -quit)"
+          test -n "$STOCK_BOOT"
+          test -s "$STOCK_BOOT"
+
+          # Use pinned AOSP/LineageOS boot-image utilities to retain stock
+          # command line, OS version, patch level, header and ramdisk settings.
+          git clone --quiet https://github.com/LineageOS/android_system_tools_mkbootimg.git "$WORKDIR/mkbootimg-tools"
+          git -C "$WORKDIR/mkbootimg-tools" checkout --quiet 808ecd09666ffe0ff5800f02af693abce56eb395
+
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/stock-unpacked" \
+            --format info | tee "$WORKDIR/stock-boot-info.txt"
+
+          HEADER_VERSION="$(awk -F': ' '/boot image header version:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+          case "$HEADER_VERSION" in
+            3|4) ;;
+            *) echo "Unsupported stock boot header version: $HEADER_VERSION"; exit 1 ;;
+          esac
+
+                    # The stock GKI boot signature is for VTS certification,
+          # not device-specific bootloader verification.
+          # A modified kernel cannot retain the original signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/stock-boot-info.txt")"
+            echo "Stock GKI boot signature: ${SIGNATURE_SIZE} bytes"
+            echo "The modified test image will be packaged without the stale GKI signature."
+          fi
+
+          # Replace only the boot partition's kernel payload. Keep the original
+          # stock ramdisk and all metadata extracted from this exact release.
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/stock-unpacked/kernel"
+          # Generate the mkbootimg argument list into a second directory
+          # so the first extraction (and its original ramdisk) stays intact.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$STOCK_BOOT" \
+            --out "$WORKDIR/mkbootimg-inputs" \
+            --format mkbootimg -0 > "$WORKDIR/mkbootimg-args.bin"
+          cp out/arch/arm64/boot/Image.gz "$WORKDIR/mkbootimg-inputs/kernel"
+
+          mapfile -d '' -t MKBOOTIMG_ARGS < "$WORKDIR/mkbootimg-args.bin"
+          python3 "$WORKDIR/mkbootimg-tools/mkbootimg.py" \
+            "${MKBOOTIMG_ARGS[@]}" \
+            --output "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img"
+
+          # Independently unpack the result and verify the kernel, ramdisk,
+          # header, OS version, patch level and kernel command line.
+          python3 "$WORKDIR/mkbootimg-tools/unpack_bootimg.py" \
+            --boot_img "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            --out "$WORKDIR/repacked-unpacked" \
+            --format info | tee "$WORKDIR/repacked-boot-info.txt"
+
+          cmp out/arch/arm64/boot/Image.gz "$WORKDIR/repacked-unpacked/kernel"
+          # Verify that the output does not contain a stale GKI signature.
+          if [ "$HEADER_VERSION" = "4" ]; then
+            OUTPUT_SIGNATURE_SIZE="$(awk -F': ' '/boot.img signature size:/ {print $2}' "$WORKDIR/repacked-boot-info.txt")"
+            test "$OUTPUT_SIGNATURE_SIZE" = "0"
+            echo "Verified: output boot signature size is 0."
+          fi
+          cmp "$WORKDIR/stock-unpacked/ramdisk" "$WORKDIR/repacked-unpacked/ramdisk"
+
+          for field in "os version" "os patch level" "boot image header version" "command line args"; do
+            grep -F "$field:" "$WORKDIR/stock-boot-info.txt" > "$WORKDIR/stock-field.txt"
+            grep -F "$field:" "$WORKDIR/repacked-boot-info.txt" > "$WORKDIR/repacked-field.txt"
+            cmp "$WORKDIR/stock-field.txt" "$WORKDIR/repacked-field.txt"
+          done
+
+          BOOT_SIZE="$(stat -c %s "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img")"
+          test "$BOOT_SIZE" -le 134217728
+          sha256sum "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img" \
+            > "$GITHUB_WORKSPACE/boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256"
+
+      - name: Upload kernel and test boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pong-BakaSU-SUSFS-B4.1-260818-1726-TEST-ONLY
+          path: |
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img
+            boot-bakasu-susfs-pong-b4.1-260818-1726.img.sha256
+            out/arch/arm64/boot/Image.gz
+            out/.config
+          retention-days: 7
