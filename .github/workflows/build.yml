@@ -514,7 +514,7 @@ jobs:
           # that command from the output directory, where the file is absent.
           KERNEL_VERSION="$(tr -d '\r\n' < version)"
           test -n "$KERNEL_VERSION"
-          sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"-arter97-$KERNEL_VERSION-bakasu-susfs\"|" arch/arm64/configs/custom_defconfig
+          sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"-Pong-B4.1-bakasu-susfs\"|" arch/arm64/configs/custom_defconfig
           cat >> arch/arm64/configs/custom_defconfig <<'EOF'
 
           # BakaSU + SUSFS
