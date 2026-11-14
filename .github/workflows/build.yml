@@ -412,11 +412,16 @@ jobs:
           """
               source = insert_once(source, entry, hook, "do_execveat_common entry")
 
-          exit_anchor = """out_ret:
+          if "ksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags, &retval);" not in source:
+              # fs/exec.c has multiple out_ret labels; scope the match to
+              # do_execveat_common rather than requiring a file-wide unique hit.
+              function_start = source.index("static int do_execveat_common(")
+              function_end = source.index("\\nint kernel_execve(", function_start)
+              function_source = source[function_start:function_end]
+              exit_anchor = """out_ret:
           \tputname(filename);
           \treturn retval;
           """
-          if "ksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags, &retval);" not in source:
               exit_hook = """out_ret:
           #ifdef CONFIG_KSU_MANUAL_HOOK
           \tksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags, &retval);
@@ -424,7 +429,10 @@ jobs:
           \tputname(filename);
           \treturn retval;
           """
-              source = insert_once(source, exit_anchor, exit_hook, "do_execveat_common exit")
+              function_source = insert_once(
+                  function_source, exit_anchor, exit_hook, "do_execveat_common exit"
+              )
+              source = source[:function_start] + function_source + source[function_end:]
           exec_path.write_text(source)
 
           reboot_path = Path("kernel/reboot.c")
