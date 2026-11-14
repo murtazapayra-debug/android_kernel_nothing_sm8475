@@ -416,7 +416,7 @@ jobs:
               # fs/exec.c has multiple out_ret labels; scope the match to
               # do_execveat_common rather than requiring a file-wide unique hit.
               function_start = source.index("static int do_execveat_common(")
-              function_end = source.index("\\nint kernel_execve(", function_start)
+              function_end = source.index("int kernel_execve(", function_start)
               function_source = source[function_start:function_end]
               exit_anchor = """out_ret:
           \tputname(filename);
