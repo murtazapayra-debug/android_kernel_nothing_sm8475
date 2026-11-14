@@ -556,6 +556,19 @@ jobs:
           print("Removed stock WALT references to unavailable sched_feat_* symbols")
           PY
 
+      - name: Fix legacy slot status prototype for modern Clang
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("drivers/misc/slot_status.c")
+          s = p.read_text()
+          old = "static int slot_parse_dt()"
+          if s.count(old) != 1:
+              raise SystemExit("Expected one legacy slot_parse_dt declaration")
+          p.write_text(s.replace(old, "static int slot_parse_dt(void)", 1))
+          print("Fixed slot_parse_dt strict-prototype warning.")
+          PY
+
       - name: Prepare Pong defconfig
         run: |
           cp defconfig arch/arm64/configs/custom_defconfig
