@@ -58,7 +58,7 @@ jobs:
             bc bison build-essential ccache curl flex git gnupg gperf \
             libncurses5-dev libssl-dev libxml2 libxml2-utils lzop rsync \
             schedtool squashfs-tools xsltproc zip zlib1g-dev python3 \
-            libelf-dev lz4 cpio fakeroot dwarves p7zip-full
+            libelf-dev lz4 cpio fakeroot dwarves p7zip-full binutils-aarch64-linux-gnu
 
       - name: Install LLVM 22.1.0
         if: steps.llvm-cache.outputs.cache-hit != 'true'
@@ -577,6 +577,7 @@ jobs:
           SUBARCH: arm64
           LLVM: "1"
           LLVM_IAS: "1"
+          CROSS_COMPILE: aarch64-linux-gnu-
           CC: ccache clang
           CCACHE_DIR: ${{ runner.temp }}/ccache
           CCACHE_MAXSIZE: 4G
