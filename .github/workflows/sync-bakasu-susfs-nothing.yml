@@ -20,7 +20,7 @@ jobs:
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_WORKFLOW_TOKEN }}
 
       - name: Fetch latest Nothing Phone 2 stock source
         shell: bash
