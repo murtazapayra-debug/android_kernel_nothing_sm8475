@@ -266,9 +266,9 @@ jobs:
           avc_count = ctx_count = bounded_count = 0
           for path in selinux_sources:
               source = path.read_text()
-      # This NothingOS tree's avc_has_perm() requires the explicit
-      # &selinux_state argument. Preserve the kernel-native API.
-      avc = 0
+              # This NothingOS tree's avc_has_perm() requires the explicit
+              # &selinux_state argument. Preserve the kernel-native API.
+              avc = 0
               source, ctx = re.subn(r'security_context_to_sid_force\(\s*&selinux_state\s*,\s*', 'security_context_to_sid_force(', source)
               source, bounded = re.subn(r'security_bounded_transition\(\s*&selinux_state\s*,\s*', 'security_bounded_transition(', source)
               avc_count += avc
