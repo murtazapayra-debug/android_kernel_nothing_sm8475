@@ -121,7 +121,7 @@ jobs:
           stock release and is TEST-ONLY.
           EOF
 
-          git add .github/workflows/build.yml defconfig version PORTING_NOTES.md
+          git add -f .github/workflows/build.yml defconfig version PORTING_NOTES.md
           git commit -m "Start BakaSU SUSFS port from NothingOS 4.1 stock 5.10.252"
           echo "TARGET_BRANCH=$TARGET_BRANCH" >> "$GITHUB_ENV"
           echo "## New stock-based branch" >> "$GITHUB_STEP_SUMMARY"
