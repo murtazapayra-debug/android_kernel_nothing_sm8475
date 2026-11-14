@@ -98,7 +98,7 @@ jobs:
               i += 1
           source = "\n".join(output) + "\n"
           source = source.replace(
-              "Pong-BakaSU-SUSFS-B4.1-261014-1615-TEST-ONLY",
+              "Pong-BakaSU-SUSFS-NothingStock-B4.1-260818-1726-TEST-ONLY",
               "Pong-BakaSU-SUSFS-NothingStock-B4.1-260818-1726-TEST-ONLY",
           )
           path.write_text(source)
