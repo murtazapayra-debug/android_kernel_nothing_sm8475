@@ -1,0 +1,79 @@
+name: Sync BakaSU-SUSFS with latest Nothing stock kernel
+
+on:
+  push:
+    branches:
+      - sync/bakasu-susfs-nothing-b4.1
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout custom kernel branch with full history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch latest Nothing Phone 2 stock kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add nothing https://github.com/NothingOSS/android_kernel_msm-5.10_nothing_sm8475.git
+          git fetch --no-tags nothing refs/heads/sm8475/b/mr:refs/remotes/nothing/sm8475/b/mr
+          echo "## Source revisions" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Custom branch before sync: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Nothing stock target: $(git rev-parse refs/remotes/nothing/sm8475/b/mr)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Stock commit: https://github.com/NothingOSS/android_kernel_msm-5.10_nothing_sm8475/commit/$(git rev-parse refs/remotes/nothing/sm8475/b/mr)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Kernel release target: Linux 5.10.252 / NothingOS 4.1" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Merge Nothing stock changes without overwriting custom features
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git merge --no-edit --no-ff refs/remotes/nothing/sm8475/b/mr -m "Merge latest NothingOS 4.1 stock kernel and upstream 5.10.252 updates"; then
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+            echo "## Merge result" >> "$GITHUB_STEP_SUMMARY"
+            echo "Nothing stock source merged cleanly. Existing BakaSU/SUSFS commits and custom changes are retained." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Merge requires manual conflict resolution"
+              echo "The original bakasu-susfs branch was not modified. Conflicting paths:"
+              git diff --name-only --diff-filter=U || true
+              echo
+              echo "Merge status:"
+              git status --short
+            } >> "$GITHUB_STEP_SUMMARY"
+            git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt" || true
+            git merge --abort || true
+            exit 1
+          fi
+
+      - name: Push isolated updated branch
+        if: steps.merge.outputs.clean == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:refs/heads/sync/bakasu-susfs-nothing-b4.1
+          echo "Pushed merge commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Start BakaSU-SUSFS build and boot-image validation
+        if: steps.merge.outputs.clean == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run build.yml --ref sync/bakasu-susfs-nothing-b4.1
+          echo "Dispatched the existing BakaSU-SUSFS build workflow on the isolated sync branch." >> "$GITHUB_STEP_SUMMARY"
