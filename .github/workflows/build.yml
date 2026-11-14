@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - bakasu-susfs
+      - stock-bakasu-susfs-b4.1
 
 permissions:
   contents: read
