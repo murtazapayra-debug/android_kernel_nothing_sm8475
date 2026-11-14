@@ -611,7 +611,9 @@ jobs:
           LLVM_IAS: "1"
         run: |
           make O=out custom_defconfig
-          make O=out olddefconfig
+          # Resolve newly introduced Kconfig symbols non-interactively before
+          # any later make target can unexpectedly enter Restart config mode.
+          yes "" | make O=out oldconfig
           grep -q '^CONFIG_KSU=y$' out/.config
           grep -q '^CONFIG_KSU_SUSFS=y$' out/.config
           grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' out/.config
@@ -650,17 +652,10 @@ jobs:
         run: |
           ccache --zero-stats
           ccache --show-config
-          # Build the SELinux host header generator. This tree does not expose
-          # security/selinux/flask.h as a top-level Kbuild target.
-          make O=out scripts
-          test -x out/scripts/selinux/genheaders/genheaders
-          mkdir -p out/security/selinux
-          out/scripts/selinux/genheaders/genheaders \
-            out/security/selinux/flask.h \
-            out/security/selinux/av_permissions.h
+          # Generate SELinux headers through Kbuild's SELinux directory target.
+          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
           test -s out/security/selinux/flask.h
           test -s out/security/selinux/av_permissions.h
-          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
           test -s out/arch/arm64/boot/Image.gz
           ccache --show-stats
 
