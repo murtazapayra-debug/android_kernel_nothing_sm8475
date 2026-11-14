@@ -650,7 +650,9 @@ jobs:
         run: |
           ccache --zero-stats
           ccache --show-config
-          make -j"$(nproc --all)" O=out Image.gz
+          make O=out security/selinux/flask.h
+          test -s out/security/selinux/flask.h
+          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
           test -s out/arch/arm64/boot/Image.gz
           ccache --show-stats
 
