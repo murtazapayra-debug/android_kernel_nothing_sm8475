@@ -375,9 +375,86 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          # These vendor-tree callsites were originally guarded for BakaSU's
-          # Manual Hook mode. SUSFS Inline Hook mode also needs them compiled.
-          # Kconfig makes MANUAL_HOOK and SUSFS mutually exclusive.
+          # The Nothing stock tree does not carry Arter97's BakaSU
+          # manual-hook callsites. Seed the minimal equivalent callsites
+          # before enabling them for SUSFS inline-hook builds.
+          exec_path = Path("fs/exec.c")
+          exec_source = exec_path.read_text()
+          if "ksu_handle_execveat" not in exec_source:
+              include_anchor = "#include <linux/spinlock.h>\\n"
+              declarations = """#include <linux/spinlock.h>
+
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
+                                         void *argv, void *envp, int *flags);
+          extern int ksu_handle_post_execveat(int *fd, struct filename **filename_ptr,
+                                              void *argv, void *envp, int *flags,
+                                              int *retval);
+          #endif
+          """
+              if exec_source.count(include_anchor) != 1:
+                  raise SystemExit("Could not locate unique fs/exec.c include anchor")
+              exec_source = exec_source.replace(include_anchor, declarations, 1)
+              entry = """\tif (IS_ERR(filename))
+          \t\treturn PTR_ERR(filename);
+          """
+              hook = entry + """
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          \tksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+          #endif
+          """
+              if exec_source.count(entry) != 1:
+                  raise SystemExit("Could not locate unique do_execveat_common entry")
+              exec_source = exec_source.replace(entry, hook, 1)
+              exit_anchor = """out_ret:
+          \tputname(filename);
+          \treturn retval;
+          """
+              exit_hook = """out_ret:
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          \tksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags, &retval);
+          #endif
+          \tputname(filename);
+          \treturn retval;
+          """
+              if exec_source.count(exit_anchor) != 1:
+                  raise SystemExit("Could not locate unique do_execveat_common exit")
+              exec_path.write_text(exec_source.replace(exit_anchor, exit_hook, 1))
+              print("Added stock do_execveat_common BakaSU hook callsites")
+          
+          reboot_path = Path("kernel/reboot.c")
+          reboot_source = reboot_path.read_text()
+          if "ksu_handle_sys_reboot" not in reboot_source:
+              include_anchor = "#include <linux/uaccess.h>\\n"
+              declarations = """#include <linux/uaccess.h>
+
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          extern int ksu_handle_sys_reboot(int magic1, int magic2,
+                                           unsigned int cmd, void __user **arg);
+          #endif
+          """
+              if reboot_source.count(include_anchor) != 1:
+                  raise SystemExit("Could not locate unique kernel/reboot.c include anchor")
+              reboot_source = reboot_source.replace(include_anchor, declarations, 1)
+              entry = """\tint ret = 0;
+
+          \t/* We only trust the superuser with rebooting the system. */
+          """
+              hook = """\tint ret = 0;
+
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          \tksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
+          #endif
+
+          \t/* We only trust the superuser with rebooting the system. */
+          """
+              if reboot_source.count(entry) != 1:
+                  raise SystemExit("Could not locate unique reboot syscall entry")
+              reboot_path.write_text(reboot_source.replace(entry, hook, 1))
+              print("Added stock reboot syscall BakaSU hook callsite")
+
+          # These vendor-tree callsites are enabled for both BakaSU Manual
+          # Hook and SUSFS Inline Hook modes.
           targets = {
               "fs/exec.c": 3,
               # fs/open.c and fs/stat.c retain legacy userspace-pointer
