@@ -652,10 +652,18 @@ jobs:
         run: |
           ccache --zero-stats
           ccache --show-config
-          # Generate SELinux headers through Kbuild's SELinux directory target.
-          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
+          # Build SELinux's small host generator explicitly. The vendor Kbuild
+          # tree does not reliably descend into scripts/selinux/genheaders
+          # before BakaSU objects include security.h.
+          mkdir -p out/security/selinux
+          gcc -Iinclude/uapi -Iinclude -Isecurity/selinux/include \
+            scripts/selinux/genheaders/genheaders.c -o out/genheaders
+          test -x out/genheaders
+          out/genheaders out/security/selinux/flask.h out/security/selinux/av_permissions.h
           test -s out/security/selinux/flask.h
           test -s out/security/selinux/av_permissions.h
+          # Make the generated SELinux headers visible to BakaSU translation units.
+          make -j"$(nproc --all)" O=out KCFLAGS="-I$(pwd)/out/security/selinux" Image.gz
           test -s out/arch/arm64/boot/Image.gz
           ccache --show-stats
 
