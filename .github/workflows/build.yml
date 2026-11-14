@@ -278,31 +278,42 @@ jobs:
               raise SystemExit(f"Missing expected SUSFS SELinux compatibility calls: avc={avc_count}, bounded={bounded_count}")
           print(f"Adapted vendor SELinux APIs: avc={avc_count}, context={ctx_count}, bounded={bounded_count}")
 
-          # Only do_execveat_common owns stack-allocated bprm and needs &bprm.
-          # Other free_bprm callers (for example fill_bprm) receive a pointer.
+          # This stock tree uses a heap-allocated linux_binprm pointer in
+          # do_execveat_common; keep free_bprm(bprm), not &bprm.
           path = Path("fs/exec.c")
           source = path.read_text()
           begin = source.index("static int do_execveat_common(")
           finish = source.index(chr(10) + "int kernel_execve(", begin)
           function = source[begin:finish]
-          old = "free_bprm(bprm);"
-          new = "free_bprm(&bprm);"
-          pointer_calls = function.count(old)
-          stack_calls = function.count(new)
-          # The SUSFS patch leaves two cleanup paths in this function. Both
-          # own the stack-allocated bprm object and must pass its address.
-          if pointer_calls + stack_calls != 2:
-              raise SystemExit(
-                  f"Unexpected do_execveat_common cleanup count: "
-                  f"pointer={pointer_calls}, stack={stack_calls}"
-              )
-          function = function.replace(old, new)
-          if function.count(new) != 2:
-              raise SystemExit("Failed to normalize both stack bprm cleanup calls")
-          source = source[:begin] + function + source[finish:]
-          path.write_text(source)
-          print("Verified both do_execveat_common cleanup paths use free_bprm(&bprm); other callers unchanged.")
+          if function.count("free_bprm(bprm);") != 2 or "&bprm" in function:
+              raise SystemExit("Unexpected stock do_execveat_common bprm cleanup form")
+          print("Verified stock do_execveat_common uses pointer-based free_bprm(bprm).")
 
+          # This vendor driver cannot dereference struct module when modules
+          # are disabled; use the module kset lookup used by the Arter tree.
+          path = Path("drivers/soc/qcom/soc_sleep_stats.c")
+          source = path.read_text()
+          old = """static struct kobject *get_module_kobj(struct device *dev)
+          {
+
+          	if(!dev) {
+          		return NULL;
+          	}
+          	return &dev->driver->owner->mkobj.kobj;
+
+
+          }
+          """
+          new = """static struct kobject *get_module_kobj(struct device *dev)
+          {
+          	return kset_find_obj(module_kset, KBUILD_MODNAME);
+          }
+          """
+          if source.count(old) != 1:
+              raise SystemExit("Could not uniquely locate soc_sleep_stats module kobject helper")
+          path.write_text(source.replace(old, new, 1))
+          print("Adapted soc_sleep_stats module kobject lookup.")
+          
           # The vendor SELinux filesystem uses the global selinux_state and
           # legacy three-argument SID conversion API. Upstream SUSFS assumes
           # the newer per-filesystem state member and four-argument API.
