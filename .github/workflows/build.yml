@@ -412,6 +412,19 @@ jobs:
           """
               source = insert_once(source, anchor, addition, "fs/exec.c include anchor")
 
+          if "extern int ksu_handle_post_execveat(" not in source:
+              declaration_start = source.find("extern int ksu_handle_execveat(")
+              if declaration_start < 0:
+                  raise SystemExit("Missing primary BakaSU exec hook declaration")
+              declaration_end = source.find(";", declaration_start)
+              if declaration_end < 0:
+                  raise SystemExit("Unterminated primary BakaSU exec hook declaration")
+              post_declaration = """
+          extern int ksu_handle_post_execveat(int *fd, struct filename **filename_ptr,
+                                              void *argv, void *envp, int *flags,
+                                              int *retval);"""
+              source = source[:declaration_end + 1] + post_declaration + source[declaration_end + 1:]
+
           entry = """\tif (IS_ERR(filename))
           \t\treturn PTR_ERR(filename);
           """
