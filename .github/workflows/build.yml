@@ -237,11 +237,22 @@ jobs:
           bypass_orig_flow:
           #endif_placeholder
           \taudit_log_format(ab, " tclass=%s", secclass_map[sad->tclass-1].name);'''
-          if source.count(old) != 1:
-              raise SystemExit("Could not uniquely locate vendor SELinux AVC audit block")
-          new = new.replace("#ifdef_placeholder", "#ifdef CONFIG_KSU_SUSFS").replace("#endif_placeholder", "#endif")
-          avc.write_text(source.replace(old, new))
-          print("Applied vendor-compatible SUSFS AVC spoofing hook")
+          match_count = source.count(old)
+          if match_count == 1:
+              # Arter97's AVC callback uses the vendor stack-based SID API.
+              new = new.replace("#ifdef_placeholder", "#ifdef CONFIG_KSU_SUSFS").replace("#endif_placeholder", "#endif")
+              avc.write_text(source.replace(old, new))
+              print("Applied vendor-compatible SUSFS AVC spoofing hook")
+          elif "susfs_ksu_sid" in source and "susfs_is_avc_log_spoofing_enabled" in source:
+              # On the Nothing stock tree, the upstream SUSFS patch can apply
+              # its AVC hunk directly. In that case the Arter97 fallback block
+              # is no longer present and must not be applied a second time.
+              print("SUSFS AVC spoofing hunk is already present; skipped Arter97-only fallback")
+          else:
+              raise SystemExit(
+                  "SUSFS AVC hunk is neither already applied nor compatible with "
+                  f"the Arter97 fallback (legacy block matches={match_count})"
+              )
           PY
 
           # Upstream SUSFS uses newer SELinux helper signatures; adapt only
