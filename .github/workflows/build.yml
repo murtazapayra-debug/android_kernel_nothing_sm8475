@@ -256,29 +256,42 @@ jobs:
               )
           PY
 
-          # Upstream SUSFS uses newer SELinux helper signatures; adapt only
-          # calls that actually pass selinux_state, including multiline calls.
+          # The SUSFS patch updates these helpers to the per-state SELinux API.
+          # Some vendor callsites are not covered by upstream hunks; add the
+          # global vendor state only where it is missing. Never strip it from
+          # calls that already use the new signatures.
           python3 - <<'PY'
           from pathlib import Path
           import re
 
           selinux_sources = list(Path("security/selinux").rglob("*.c"))
-          avc_count = ctx_count = bounded_count = 0
+          context_added = bounded_added = 0
           for path in selinux_sources:
               source = path.read_text()
-              # This NothingOS tree's avc_has_perm() requires the explicit
-              # &selinux_state argument. Preserve the kernel-native API.
-              avc = 0
-              source, ctx = re.subn(r'security_context_to_sid_force\(\s*&selinux_state\s*,\s*', 'security_context_to_sid_force(', source)
-              source, bounded = re.subn(r'security_bounded_transition\(\s*&selinux_state\s*,\s*', 'security_bounded_transition(', source)
-              avc_count += avc
-              ctx_count += ctx
-              bounded_count += bounded
-              if avc or ctx or bounded:
+              source, ctx = re.subn(
+                  r'security_context_to_sid_force\\((?!\\s*&selinux_state\\s*,)',
+                  'security_context_to_sid_force(&selinux_state, ',
+                  source,
+              )
+              source, bounded = re.subn(
+                  r'security_bounded_transition\\((?!\\s*&selinux_state\\s*,)',
+                  'security_bounded_transition(&selinux_state, ',
+                  source,
+              )
+              context_added += ctx
+              bounded_added += bounded
+              if ctx or bounded:
                   path.write_text(source)
-          if bounded_count < 1:
-              raise SystemExit(f"Missing expected SUSFS SELinux compatibility calls: avc={avc_count}, bounded={bounded_count}")
-          print(f"Adapted vendor SELinux APIs: avc={avc_count}, context={ctx_count}, bounded={bounded_count}")
+          if context_added < 1 or bounded_added < 1:
+              raise SystemExit(
+                  f"Expected missing vendor SELinux state arguments: "
+                  f"context={context_added}, bounded={bounded_added}"
+              )
+          print(
+              f"Added missing SELinux state arguments: "
+              f"context={context_added}, bounded={bounded_added}"
+          )
+          PY
 
           # This stock tree uses a heap-allocated linux_binprm pointer in
           # do_execveat_common; keep free_bprm(bprm), not &bprm.
