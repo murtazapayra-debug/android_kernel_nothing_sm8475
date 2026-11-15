@@ -345,9 +345,9 @@ jobs:
           )
           # Mark retained fsi declarations maybe-unused without inserting
           # statements that violate this kernel's declaration ordering rules.
-          source = re.sub(
-              r"(?m)^(\\s*struct selinux_fs_info \\*fsi)(\\s*=)",
-              r"\\1 __maybe_unused\\2",
+          source, fsi_count = re.subn(
+              r"(?m)^(\s*struct selinux_fs_info \*fsi)(\s*=)",
+              r"\1 __maybe_unused\2",
               source,
           )
           # The two upstream handlers no longer need the per-superblock
@@ -361,7 +361,7 @@ jobs:
                   f"state={state_count}, sid={sid_count}"
               )
           selinuxfs.write_text(source)
-          print(f"Adapted vendor selinuxfs API: state={state_count}, sid={sid_count}; retained selinux_fs_info pointers")
+          print(f"Adapted vendor selinuxfs API: state={state_count}, sid={sid_count}, fsi={fsi_count}")
 
           # Nothing stock already uses the per-state SELinux APIs in
           # status.c and services.c. Do not rewrite these state arguments.
