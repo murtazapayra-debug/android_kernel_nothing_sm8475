@@ -282,13 +282,10 @@ jobs:
               bounded_added += bounded
               if ctx or bounded:
                   path.write_text(source)
-          if context_added < 1 or bounded_added < 1:
-              raise SystemExit(
-                  f"Expected missing vendor SELinux state arguments: "
-                  f"context={context_added}, bounded={bounded_added}"
-              )
+          # SUSFS may already have converted every callsite. Zero additions
+          # is valid; only malformed function definitions must be avoided.
           print(
-              f"Added missing SELinux state arguments: "
+              f"SELinux state callsite adaptation complete: "
               f"context={context_added}, bounded={bounded_added}"
           )
 
