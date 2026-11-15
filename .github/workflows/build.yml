@@ -417,7 +417,7 @@ jobs:
           source = exec_path.read_text()
 
           if "extern int ksu_handle_execveat(" not in source:
-              anchor = "#include <linux/spinlock.h>\\n"
+              anchor = "#include <linux/spinlock.h>\n"
               addition = """#include <linux/spinlock.h>
 
           #ifdef CONFIG_KSU_MANUAL_HOOK
@@ -480,7 +480,7 @@ jobs:
           reboot_path = Path("kernel/reboot.c")
           source = reboot_path.read_text()
           if "extern int ksu_handle_sys_reboot(" not in source:
-              anchor = "#include <linux/uaccess.h>\\n"
+              anchor = "#include <linux/uaccess.h>\n"
               addition = """#include <linux/uaccess.h>
 
           #ifdef CONFIG_KSU_MANUAL_HOOK
