@@ -343,11 +343,11 @@ jobs:
               "security_sid_to_context(&selinux_state, ",
               source,
           )
-          # Keep fsi declarations warning-free when state is redirected to
-          # the vendor global state; this is harmless where fsi is also used.
+          # Mark retained fsi declarations maybe-unused without inserting
+          # statements that violate this kernel's declaration ordering rules.
           source = re.sub(
-              r"(?m)^(\s*struct selinux_fs_info \*fsi = [^;]+;)$",
-              r"\1\n\t(void)fsi;",
+              r"(?m)^(\\s*struct selinux_fs_info \\*fsi)(\\s*=)",
+              r"\\1 __maybe_unused\\2",
               source,
           )
           # The two upstream handlers no longer need the per-superblock
