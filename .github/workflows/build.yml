@@ -109,16 +109,18 @@ jobs:
 
           rules = Path("KernelSU/kernel/selinux/rules.c")
           source = rules.read_text()
-          wrong = "#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0) || defined(SELINUX_POLICY_INSTEAD_SELINUX_SS))"
-          right = "#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))"
-          count = source.count(wrong)
+          old = "#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))"
+          new = "#if ((!defined(KSU_COMPAT_USE_SELINUX_STATE) && !defined(SELINUX_POLICY_INSTEAD_SELINUX_SS)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))"
+          count = source.count(old)
           if count != 2:
-              raise SystemExit(f"Expected 2 incorrect AVC reset guards, found {count}")
-          source = source.replace(wrong, right)
+              raise SystemExit(f"Expected 2 upstream AVC reset guards, found {count}")
+          source = source.replace(old, new)
           if source.count("avc_ss_reset(avc, 0);") != 2:
-              raise SystemExit("Expected both vendor AVC reset calls to pass selinux_state.avc")
+              raise SystemExit("Expected both vendor two-argument AVC reset calls")
+          if source.count("avc_ss_reset(0);") != 2:
+              raise SystemExit("Expected both upstream one-argument calls in the alternate branch")
           rules.write_text(source)
-          print("Restored the vendor 5.10 two-argument avc_ss_reset API")
+          print("Selected the vendor 5.10 two-argument avc_ss_reset API for SELINUX_POLICY_INSTEAD_SELINUX_SS")
           PY
 
       - name: Fix BakaSU disabled-preinit stub for void manual hook
