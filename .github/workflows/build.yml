@@ -115,10 +115,10 @@ jobs:
           if count != 2:
               raise SystemExit(f"Expected 2 upstream AVC reset guards, found {count}")
           source = source.replace(old, new)
-          if source.count("avc_ss_reset(avc, 0);") != 2:
-              raise SystemExit("Expected both vendor two-argument AVC reset calls")
-          if source.count("avc_ss_reset(0);") != 2:
-              raise SystemExit("Expected both upstream one-argument calls in the alternate branch")
+          if source.count("avc_ss_reset(avc, 0);") != 1:
+              raise SystemExit("Expected exactly one vendor two-argument AVC reset call")
+          if source.count("avc_ss_reset(0);") != 1:
+              raise SystemExit("Expected exactly one upstream one-argument call in the alternate branch")
           rules.write_text(source)
           print("Selected the vendor 5.10 two-argument avc_ss_reset API for SELINUX_POLICY_INSTEAD_SELINUX_SS")
           PY
