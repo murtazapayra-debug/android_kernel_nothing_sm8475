@@ -269,12 +269,12 @@ jobs:
           for path in selinux_sources:
               source = path.read_text()
               source, ctx = re.subn(
-                  r'(?<!susfs_)security_context_to_sid_force\((?!\s*&selinux_state\s*,)',
+                  r'(?<!susfs_)security_context_to_sid_force\((?!\s*(?:&selinux_state\s*,|struct\s+selinux_state\b))',
                   'security_context_to_sid_force(&selinux_state, ',
                   source,
               )
               source, bounded = re.subn(
-                  r'(?<!susfs_)security_bounded_transition\((?!\s*&selinux_state\s*,)',
+                  r'(?<!susfs_)security_bounded_transition\((?!\s*(?:&selinux_state\s*,|struct\s+selinux_state\b))',
                   'security_bounded_transition(&selinux_state, ',
                   source,
               )
