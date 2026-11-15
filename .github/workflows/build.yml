@@ -291,7 +291,6 @@ jobs:
               f"Added missing SELinux state arguments: "
               f"context={context_added}, bounded={bounded_added}"
           )
-          PY
 
           # This stock tree uses a heap-allocated linux_binprm pointer in
           # do_execveat_common; keep free_bprm(bprm), not &bprm.
