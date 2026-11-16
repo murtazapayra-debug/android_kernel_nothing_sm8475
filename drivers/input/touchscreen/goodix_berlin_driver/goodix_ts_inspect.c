@@ -1481,7 +1481,7 @@ static int goodix_cap_test_finish(struct goodix_ts_test *ts_test)
 	return 0;
 }
 
-static int goodix_cache_rawdata(struct goodix_ts_test *ts_test)
+static noinline int goodix_cache_rawdata(struct goodix_ts_test *ts_test)
 {
 	int ret;
 	int i;
@@ -1596,7 +1596,7 @@ static void goodix_cache_deltadata(struct goodix_ts_test *ts_test)
 	}
 }
 
-static int goodix_cache_self_rawdata(struct goodix_ts_test *ts_test)
+static noinline int goodix_cache_self_rawdata(struct goodix_ts_test *ts_test)
 {
 	int ret;
 	u32 sen_num = ts_test->test_params.sen_num;
@@ -1637,7 +1637,7 @@ static int goodix_cache_self_rawdata(struct goodix_ts_test *ts_test)
 	return ret;
 }
 
-static int goodix_cache_noisedata(struct goodix_ts_test *ts_test)
+static noinline int goodix_cache_noisedata(struct goodix_ts_test *ts_test)
 {
 	int ret;
 	int i;
@@ -1718,7 +1718,7 @@ static int goodix_cache_noisedata(struct goodix_ts_test *ts_test)
 	return ret;
 }
 
-static int goodix_cache_self_noisedata(struct goodix_ts_test *ts_test)
+static noinline int goodix_cache_self_noisedata(struct goodix_ts_test *ts_test)
 {
 	int ret;
 	int i;
