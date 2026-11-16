@@ -1481,9 +1481,6 @@ static int goodix_cap_test_finish(struct goodix_ts_test *ts_test)
 	return 0;
 }
 
-	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
-	if (!frame_buf)
-		return -ENOMEM;
 static noinline int goodix_cache_rawdata(struct goodix_ts_test *ts_test)
 {
 	int ret;
@@ -1501,8 +1498,8 @@ static noinline int goodix_cache_rawdata(struct goodix_ts_test *ts_test)
 
 	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
 	if (!frame_buf)
-		kfree(frame_buf);
 		return -ENOMEM;
+
 	if (ts_test->ts->bus->ic_type == IC_TYPE_BERLIN_D ||
 			ts_test->ts->bus->ic_type == IC_TYPE_NOTTINGHAM)
 		flag_addr = ts_test->ts->ic_info.misc.frame_data_addr;
@@ -1559,7 +1556,6 @@ static noinline int goodix_cache_rawdata(struct goodix_ts_test *ts_test)
 	}
 
 	kfree(frame_buf);
-
 	return ret;
 }
 
@@ -1610,9 +1606,6 @@ static void goodix_cache_deltadata(struct goodix_ts_test *ts_test)
 	}
 }
 
-	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
-	if (!frame_buf)
-		return -ENOMEM;
 static noinline int goodix_cache_self_rawdata(struct goodix_ts_test *ts_test)
 {
 	int ret;
@@ -1622,14 +1615,14 @@ static noinline int goodix_cache_self_rawdata(struct goodix_ts_test *ts_test)
 	u32 data_addr = ts_test->test_params.self_rawdata_addr;
 	u32 flag_addr = ts_test->ts->ic_info.misc.frame_data_addr;
 
+	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
+	if (!frame_buf)
+		return -ENOMEM;
+
 	struct goodix_ts_core *cd = ts_test->ts;
 	unsigned char *frame_buf;
 	unsigned char *cur_ptr;	
 
-	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
-	if (!frame_buf)
-		kfree(frame_buf);
-		return -ENOMEM;
 	if (cd->bus->ic_type == IC_TYPE_BERLIN_D ||
 			cd->bus->ic_type == IC_TYPE_NOTTINGHAM) {
 		ret = ts_test_read(ts_test, flag_addr, frame_buf, GOODIX_MAX_FRAMEDATA_LEN);
@@ -1659,7 +1652,6 @@ static noinline int goodix_cache_self_rawdata(struct goodix_ts_test *ts_test)
 	ts_test->self_rawdata.size = data_size;
 
 	kfree(frame_buf);
-
 	return ret;
 }
 
@@ -1682,8 +1674,8 @@ static noinline int goodix_cache_noisedata(struct goodix_ts_test *ts_test)
 
 	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
 	if (!frame_buf)
-		kfree(frame_buf);
 		return -ENOMEM;
+
 	if (cd->bus->ic_type == IC_TYPE_BERLIN_D ||
 			cd->bus->ic_type == IC_TYPE_NOTTINGHAM) {
 		flag_addr = ts_test->ts->ic_info.misc.frame_data_addr;
@@ -1752,7 +1744,6 @@ static noinline int goodix_cache_noisedata(struct goodix_ts_test *ts_test)
 	}
 
 	kfree(frame_buf);
-
 	return ret;
 }
 
@@ -1766,14 +1757,14 @@ static noinline int goodix_cache_self_noisedata(struct goodix_ts_test *ts_test)
 	u32 data_addr = ts_test->test_params.self_noisedata_addr;
 	u32 flag_addr = ts_test->ts->ic_info.misc.frame_data_addr;
 
+	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
+	if (!frame_buf)
+		return -ENOMEM;
+
 	struct goodix_ts_core *cd = ts_test->ts;
 	unsigned char *frame_buf;
 	unsigned char *cur_ptr;
 
-	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
-	if (!frame_buf)
-		kfree(frame_buf);
-		return -ENOMEM;
 	if (cd->bus->ic_type == IC_TYPE_BERLIN_D ||
 			cd->bus->ic_type == IC_TYPE_NOTTINGHAM) {
 		ret = ts_test_read(ts_test, flag_addr, frame_buf, GOODIX_MAX_FRAMEDATA_LEN);
@@ -1807,7 +1798,6 @@ static noinline int goodix_cache_self_noisedata(struct goodix_ts_test *ts_test)
 	}	
 
 	kfree(frame_buf);
-
 	return ret;	
 }
 
