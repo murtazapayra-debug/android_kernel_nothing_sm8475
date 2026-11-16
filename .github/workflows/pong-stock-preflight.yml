@@ -1,0 +1,70 @@
+name: Pong stock source preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - pong-bakasu-susfs
+
+permissions:
+  contents: read
+
+jobs:
+  source-preflight:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout migration baseline
+        uses: actions/checkout@v4
+        with:
+          ref: pong-bakasu-susfs
+          fetch-depth: 1
+
+      - name: Verify stock source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Commit: $(git rev-parse HEAD)"
+          echo "Kernel version:"
+          sed -n '1,5p' Makefile
+          echo "Top-level source markers:"
+          test -d arch/arm64
+          test -d drivers
+          test -d security/selinux
+          test -f fs/exec.c
+          test -f drivers/soc/qcom/soc_sleep_stats.c
+
+      - name: Discover Pong and vendor arm64 defconfigs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d arch/arm64/configs
+          mkdir -p preflight
+          find arch/arm64/configs -type f -name '*defconfig' -print | sort > preflight/all-arm64-defconfigs.txt
+          find arch/arm64/configs -type f -name '*defconfig' -print | grep -Ei 'pong|nothing|sm8475|vendor' | sort > preflight/candidate-defconfigs.txt || true
+          echo "All arm64 defconfigs: $(wc -l < preflight/all-arm64-defconfigs.txt)"
+          echo "Candidate defconfigs:"
+          cat preflight/candidate-defconfigs.txt
+          if [ ! -s preflight/candidate-defconfigs.txt ]; then
+            echo "::error::No Pong/Nothing/SM8475/vendor defconfig candidate found. Do not guess a config."
+            exit 1
+          fi
+
+      - name: Verify source is not contaminated by Arter build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Kernel Makefile version: $(awk '/^VERSION =/{v=$3} /^PATCHLEVEL =/{p=$3} /^SUBLEVEL =/{s=$3} END{print v "." p "." s}' Makefile)"
+          if grep -R -n --include='*defconfig' --include='*.yml' --include='*.yaml' 'arter97 r45b2\|CONFIG_LOCALVERSION="-arter97"' arch/arm64/configs .github 2>/dev/null; then
+            echo "::warning::Arter-derived metadata found in configuration/workflows; review before porting features."
+          else
+            echo "No obvious Arter build metadata found in defconfigs/workflows."
+          fi
+
+      - name: Upload preflight report
+        uses: actions/upload-artifact@v4
+        with:
+          name: pong-stock-source-preflight
+          path: preflight/
+          if-no-files-found: error
+          retention-days: 7
