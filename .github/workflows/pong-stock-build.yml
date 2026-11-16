@@ -1,0 +1,99 @@
+name: Pong stock Waipio GKI build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/pong-stock-build.yml'
+    branches:
+      - pong-bakasu-susfs
+
+permissions:
+  contents: read
+
+jobs:
+  stock-gki-build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+      OUT_DIR: out
+    steps:
+      - name: Checkout clean Nothing stock baseline
+        uses: actions/checkout@v4
+        with:
+          ref: pong-bakasu-susfs
+          fetch-depth: 1
+
+      - name: Verify source and Waipio build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Commit: $(git rev-parse HEAD)"
+          test "$(awk '/^VERSION =/{v=$3} /^PATCHLEVEL =/{p=$3} /^SUBLEVEL =/{s=$3} END{print v "." p "." s}' Makefile)" = "5.10.252"
+          test -f arch/arm64/configs/gki_defconfig
+          test -f arch/arm64/configs/vendor/waipio_GKI.config
+          test -f modules.list.msm.waipio
+          test -f build.config.msm.waipio
+          echo "Stock baseline source verified; no BakaSU/SUSFS patch is applied in this workflow."
+
+      - name: Install host dependencies and LLVM toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache clang-14 lld-14 llvm-14 \
+            flex libelf-dev libssl-dev libncurses-dev python3 python-is-python3 \
+            device-tree-compiler dwarves gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          clang-14 --version
+          ld.lld-14 --version
+
+      - name: Configure Waipio GKI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT_DIR"
+          make O="$OUT_DIR" ARCH=arm64 LLVM=-14 LLVM_IAS=1 gki_defconfig
+          scripts/kconfig/merge_config.sh -m -O "$OUT_DIR" \
+            "$OUT_DIR/.config" arch/arm64/configs/vendor/waipio_GKI.config
+          make O="$OUT_DIR" ARCH=arm64 LLVM=-14 LLVM_IAS=1 olddefconfig
+          cp "$OUT_DIR/.config" "$OUT_DIR/waipio-gki.config"
+          grep -E '^(CONFIG_ARM64=y|CONFIG_MODULES=y|CONFIG_GKI=y|CONFIG_LOCALVERSION=)' "$OUT_DIR/.config" || true
+
+      - name: Build stock kernel, modules, and device trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -j"$(nproc)" O="$OUT_DIR" ARCH=arm64 LLVM=-14 LLVM_IAS=1 \
+            Image modules dtbs 2>&1 | tee "$OUT_DIR/build.log"
+
+      - name: Validate build outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$OUT_DIR/arch/arm64/boot/Image"
+          test -s "$OUT_DIR/vmlinux"
+          test -s "$OUT_DIR/System.map"
+          test -s "$OUT_DIR/modules.builtin"
+          find "$OUT_DIR/arch/arm64/boot/dts" -type f -name '*.dtb' -print -quit | grep -q .
+          file "$OUT_DIR/arch/arm64/boot/Image"
+          sha256sum "$OUT_DIR/arch/arm64/boot/Image" | tee "$OUT_DIR/Image.sha256"
+          echo "Stock Waipio GKI compilation outputs validated."
+
+      - name: Upload stock build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pong-stock-waipio-gki-${{ github.sha }}
+          path: |
+            out/arch/arm64/boot/Image
+            out/arch/arm64/boot/dts/**/*.dtb
+            out/vmlinux
+            out/System.map
+            out/modules.builtin
+            out/waipio-gki.config
+            out/build.log
+            out/Image.sha256
+          if-no-files-found: warn
+          retention-days: 7
