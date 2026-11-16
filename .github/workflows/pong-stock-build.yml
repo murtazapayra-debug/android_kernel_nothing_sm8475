@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/pong-stock-build.yml'
       - 'arch/arm64/boot/dts/vendor/qcom/Makefile'
+      - 'drivers/input/touchscreen/goodix_berlin_driver/goodix_brl_hw.c'
     branches:
       - pong-bakasu-susfs
 
