@@ -1380,6 +1380,7 @@ static int brld_get_framedata(struct goodix_ts_core *cd,
 	int tx = cd->ic_info.parm.drv_num;
 	int rx = cd->ic_info.parm.sen_num;
 
+	/* Keep the large frame buffer off the kernel stack. */
 	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
 	if (!frame_buf)
 		return -ENOMEM;
