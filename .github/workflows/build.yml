@@ -704,11 +704,10 @@ jobs:
           WORKDIR="$RUNNER_TEMP/pong-boot-package"
           mkdir -p "$WORKDIR/stock"
 
-          HASH_LIST="Pong_B4.1-260818-1726-hash.sha256"
-          HASH_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/$HASH_LIST"
-          curl -fL --retry 3 "$HASH_URL" -o "$WORKDIR/$HASH_LIST"
-          STOCK_SHA256="$(grep -F "$STOCK_ARCHIVE" "$WORKDIR/$HASH_LIST" | head -n 1 | awk '{print $1}')"
-          test -n "$STOCK_SHA256"
+          # SHA-256 digest published for this exact immutable release asset.
+          # Pin it directly: the release hash manifest does not contain the
+          # archive filename in the format assumed by the previous grep.
+          STOCK_SHA256="f7fd61cfd62eafd1209720bc7e9d846782a13f00afd400bb259d7a8dfe57154c"
           curl -fL --retry 3 "$STOCK_URL" -o "$WORKDIR/$STOCK_ARCHIVE"
           echo "$STOCK_SHA256  $WORKDIR/$STOCK_ARCHIVE" | sha256sum -c -
 
