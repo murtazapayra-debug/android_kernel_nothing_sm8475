@@ -69,8 +69,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          make -j"$(nproc)" O="$OUT_DIR" ARCH=arm64 LLVM=-14 LLVM_IAS=1 \
-            Image modules dtbs 2>&1 | tee "$OUT_DIR/build.log"
+          make -j"$(nproc)" O="$OUT_DIR" ARCH=arm64 SUBARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- CC=clang-14 LD=ld.lld-14 \
+            LLVM= LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ \
+            Image modules dtbs V=1 2>&1 | tee "$OUT_DIR/build.log"
 
       - name: Validate build outputs
         shell: bash
