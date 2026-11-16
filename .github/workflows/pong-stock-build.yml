@@ -48,6 +48,9 @@ jobs:
             device-tree-compiler dwarves gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
           clang-14 --version
           ld.lld-14 --version
+          sudo ln -sf /usr/bin/ld.lld-14 /usr/local/bin/ld.lld
+          command -v ld.lld
+          ld.lld --version
 
       - name: Configure Waipio GKI
         shell: bash
