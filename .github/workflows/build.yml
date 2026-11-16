@@ -700,7 +700,7 @@ jobs:
           set -euo pipefail
 
           STOCK_ARCHIVE="Pong_B4.1-261014-1615-image-boot.7z"
-          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-260818-1726/${STOCK_ARCHIVE}"
+          STOCK_URL="https://github.com/spike0en/nothing_archive/releases/download/Pong_B4.1-261014-1615/${STOCK_ARCHIVE}"
           WORKDIR="$RUNNER_TEMP/pong-boot-package"
           mkdir -p "$WORKDIR/stock"
 
