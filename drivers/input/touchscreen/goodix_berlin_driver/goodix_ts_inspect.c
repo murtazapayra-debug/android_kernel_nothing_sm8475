@@ -1509,8 +1509,8 @@ static noinline int goodix_cache_rawdata(struct goodix_ts_test *ts_test)
 		ret = ts_test_write(ts_test, flag_addr, &val, 1);
 		if (ret < 0) {
 			ts_err("clean touch event failed, exit");
-			kfree(frame_buf);
-			return -EAGAIN;
+ret = -EAGAIN;
+			goto out;
 		}
 		retry = 20;
 		while (retry--) {
@@ -1521,20 +1521,20 @@ static noinline int goodix_cache_rawdata(struct goodix_ts_test *ts_test)
 		}
 		if (retry < 0) {
 			ts_err("rawdata is not ready val:0x%02x i:%d, exit", val, i);
-			kfree(frame_buf);
-			return -EAGAIN;
+ret = -EAGAIN;
+			goto out;
 		}
 
 		if (cd->bus->ic_type == IC_TYPE_BERLIN_D ||
 				cd->bus->ic_type == IC_TYPE_NOTTINGHAM) {
 			ret = ts_test_read(ts_test, flag_addr, frame_buf, GOODIX_MAX_FRAMEDATA_LEN);
 			if (ret < 0)
-				kfree(frame_buf);
-				return ret;
+ret = ret;
+			goto out;
 			if (checksum_cmp(frame_buf, cd->ic_info.misc.frame_data_head_len, CHECKSUM_MODE_U8_LE)) {
 				ts_err("frame head checksum error");
-				kfree(frame_buf);
-				return -EINVAL; 
+ret = -EINVAL;
+			goto out; 
 			}
 
 			cur_ptr = frame_buf;
@@ -1547,14 +1547,17 @@ static noinline int goodix_cache_rawdata(struct goodix_ts_test *ts_test)
 			ret = ts_test_read(ts_test, data_addr,
 				(u8 *)ts_test->rawdata[i].data, data_size * sizeof(s16));
 			if (ret < 0)
-				kfree(frame_buf);
-				return ret;
+ret = ret;
+			goto out;
 		}
 
 		ts_test->rawdata[i].size = data_size;
 		goodix_rotate_abcd2cbad(drv_num, sen_num, ts_test->rawdata[i].data);
 	}
 
+ret = ret;
+			goto out;
+out:
 	kfree(frame_buf);
 	return ret;
 }
@@ -1615,24 +1618,24 @@ static noinline int goodix_cache_self_rawdata(struct goodix_ts_test *ts_test)
 	u32 data_addr = ts_test->test_params.self_rawdata_addr;
 	u32 flag_addr = ts_test->ts->ic_info.misc.frame_data_addr;
 
-	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
-	if (!frame_buf)
-		return -ENOMEM;
-
 	struct goodix_ts_core *cd = ts_test->ts;
 	unsigned char *frame_buf;
 	unsigned char *cur_ptr;	
+
+	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
+	if (!frame_buf)
+		return -ENOMEM;
 
 	if (cd->bus->ic_type == IC_TYPE_BERLIN_D ||
 			cd->bus->ic_type == IC_TYPE_NOTTINGHAM) {
 		ret = ts_test_read(ts_test, flag_addr, frame_buf, GOODIX_MAX_FRAMEDATA_LEN);
 		if (ret < 0)
-			kfree(frame_buf);
-			return ret;
+ret = ret;
+			goto out;
 		if (checksum_cmp(frame_buf, cd->ic_info.misc.frame_data_head_len, CHECKSUM_MODE_U8_LE)) {
 			ts_err("frame head checksum error");
-			kfree(frame_buf);
-			return -EINVAL;
+ret = -EINVAL;
+			goto out;
 		}
 
 		cur_ptr = frame_buf;
@@ -1646,11 +1649,14 @@ static noinline int goodix_cache_self_rawdata(struct goodix_ts_test *ts_test)
 		ret = ts_test_read(ts_test, data_addr,
 			(u8 *)ts_test->self_rawdata.data, data_size * sizeof(s16));
 		if (ret < 0)
-			kfree(frame_buf);
-			return ret;
+ret = ret;
+			goto out;
 	}
 	ts_test->self_rawdata.size = data_size;
 
+ret = ret;
+			goto out;
+out:
 	kfree(frame_buf);
 	return ret;
 }
@@ -1685,8 +1691,8 @@ static noinline int goodix_cache_noisedata(struct goodix_ts_test *ts_test)
 		ret = ts_test_send_cmd(ts_test, &temp_cmd);
 		if (ret < 0) {
 			ts_err("switch diffdata mode failed, exit!");
-			kfree(frame_buf);
-			return ret;
+ret = ret;
+			goto out;
 		}
 	}
 
@@ -1695,8 +1701,8 @@ static noinline int goodix_cache_noisedata(struct goodix_ts_test *ts_test)
 		ret = ts_test_write(ts_test, flag_addr, &val, 1);
 		if (ret < 0) {
 			ts_err("clean touch event failed, exit");
-			kfree(frame_buf);
-			return -EAGAIN;
+ret = -EAGAIN;
+			goto out;
 		}
 		retry = 20;
 		while (retry--) {
@@ -1707,20 +1713,20 @@ static noinline int goodix_cache_noisedata(struct goodix_ts_test *ts_test)
 		}
 		if (retry < 0) {
 			ts_err("noisedata is not ready val:0x%02x i:%d, exit", val, cnt);
-			kfree(frame_buf);
-			return -EAGAIN;
+ret = -EAGAIN;
+			goto out;
 		}
 
 		if (cd->bus->ic_type == IC_TYPE_BERLIN_D ||
 				cd->bus->ic_type == IC_TYPE_NOTTINGHAM) {
 			ret = ts_test_read(ts_test, flag_addr, frame_buf, GOODIX_MAX_FRAMEDATA_LEN);
 			if (ret < 0)
-				kfree(frame_buf);
-				return ret;
+ret = ret;
+			goto out;
 			if (checksum_cmp(frame_buf, cd->ic_info.misc.frame_data_head_len, CHECKSUM_MODE_U8_LE)) {
 				ts_err("frame head checksum error");
-				kfree(frame_buf);
-				return -EINVAL; 
+ret = -EINVAL;
+			goto out; 
 			}
 
 			cur_ptr = frame_buf;
@@ -1733,8 +1739,8 @@ static noinline int goodix_cache_noisedata(struct goodix_ts_test *ts_test)
 			ret = ts_test_read(ts_test, data_addr,
 				(u8 *)ts_test->noisedata[cnt].data, data_size * sizeof(s16));
 			if (ret < 0)
-				kfree(frame_buf);
-				return ret;
+ret = ret;
+			goto out;
 		}
 
 		ts_test->noisedata[cnt].size = data_size;
@@ -1743,6 +1749,9 @@ static noinline int goodix_cache_noisedata(struct goodix_ts_test *ts_test)
 			ts_test->noisedata[cnt].data[i] = ABS(ts_test->noisedata[cnt].data[i]);
 	}
 
+ret = ret;
+			goto out;
+out:
 	kfree(frame_buf);
 	return ret;
 }
@@ -1757,24 +1766,24 @@ static noinline int goodix_cache_self_noisedata(struct goodix_ts_test *ts_test)
 	u32 data_addr = ts_test->test_params.self_noisedata_addr;
 	u32 flag_addr = ts_test->ts->ic_info.misc.frame_data_addr;
 
-	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
-	if (!frame_buf)
-		return -ENOMEM;
-
 	struct goodix_ts_core *cd = ts_test->ts;
 	unsigned char *frame_buf;
 	unsigned char *cur_ptr;
+
+	frame_buf = kmalloc(GOODIX_MAX_FRAMEDATA_LEN, GFP_KERNEL);
+	if (!frame_buf)
+		return -ENOMEM;
 
 	if (cd->bus->ic_type == IC_TYPE_BERLIN_D ||
 			cd->bus->ic_type == IC_TYPE_NOTTINGHAM) {
 		ret = ts_test_read(ts_test, flag_addr, frame_buf, GOODIX_MAX_FRAMEDATA_LEN);
 		if (ret < 0)
-			kfree(frame_buf);
-			return ret;
+ret = ret;
+			goto out;
 		if (checksum_cmp(frame_buf, cd->ic_info.misc.frame_data_head_len, CHECKSUM_MODE_U8_LE)) {
 			ts_err("frame head checksum error");
-			kfree(frame_buf);
-			return -EINVAL;
+ret = -EINVAL;
+			goto out;
 		}
 
 		cur_ptr = frame_buf;
@@ -1788,8 +1797,8 @@ static noinline int goodix_cache_self_noisedata(struct goodix_ts_test *ts_test)
 		ret = ts_test_read(ts_test, data_addr,
 			(u8 *)ts_test->self_noisedata.data, data_size * sizeof(s16));
 		if (ret < 0)
-			kfree(frame_buf);
-			return ret;
+ret = ret;
+			goto out;
 	}
 
 	ts_test->self_noisedata.size = data_size;
@@ -1797,8 +1806,11 @@ static noinline int goodix_cache_self_noisedata(struct goodix_ts_test *ts_test)
 		ts_test->self_noisedata.data[i] = ABS(ts_test->self_noisedata.data[i]);
 	}	
 
+ret = ret;
+			goto out;	
+out:
 	kfree(frame_buf);
-	return ret;	
+	return ret;
 }
 
 static int goodix_analysis_rawdata(struct goodix_ts_test *ts_test)
