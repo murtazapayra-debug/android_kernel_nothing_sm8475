@@ -25,40 +25,45 @@ jobs:
         run: |
           set -euo pipefail
           echo "Commit: $(git rev-parse HEAD)"
-          echo "Kernel version:"
           sed -n '1,5p' Makefile
-          echo "Top-level source markers:"
           test -d arch/arm64
           test -d drivers
           test -d security/selinux
           test -f fs/exec.c
           test -f drivers/soc/qcom/soc_sleep_stats.c
 
-      - name: Discover Pong and vendor arm64 defconfigs
+      - name: Discover actual Qualcomm Waipio build target
         shell: bash
         run: |
           set -euo pipefail
-          test -d arch/arm64/configs
           mkdir -p preflight
-          find arch/arm64/configs -type f -name '*defconfig' -print | sort > preflight/all-arm64-defconfigs.txt
-          find arch/arm64/configs -type f -name '*defconfig' -print | grep -Ei 'pong|nothing|sm8475|vendor' | sort > preflight/candidate-defconfigs.txt || true
-          echo "All arm64 defconfigs: $(wc -l < preflight/all-arm64-defconfigs.txt)"
-          echo "Candidate defconfigs:"
-          cat preflight/candidate-defconfigs.txt
-          if [ ! -s preflight/candidate-defconfigs.txt ]; then
-            echo "::error::No Pong/Nothing/SM8475/vendor defconfig candidate found. Do not guess a config."
-            exit 1
-          fi
+          find arch/arm64/configs -type f -print | sort > preflight/all-arm64-configs.txt
+          cp build.targets preflight/build.targets
+          echo "Declared build targets:"
+          cat build.targets
+          grep -qx 'build.config.msm.waipio' build.targets
+          test -f build.config.msm.waipio
+          test -f build.config.msm.gki
+          test -f arch/arm64/configs/vendor/waipio_GKI.config
+          test -f arch/arm64/configs/vendor/waipio_consolidate.config
+          {
+            echo "Selected target: build.config.msm.waipio"
+            echo "Architecture family: Waipio (SM8475 platform family)"
+            echo "GKI variant: VARIANT=gki"
+            echo "Config fragment: arch/arm64/configs/vendor/waipio_GKI.config"
+            echo "Generated defconfig is assembled by build.config.msm.gki; it is not a checked-in *defconfig."
+          } | tee preflight/selected-build-target.txt
+          grep -nE 'MSM_ARCH=|VARIANTS=|DEFCONFIG=|waipio_GKI.config|BUILD_BOOT_IMG|BUILD_VENDOR_DLKM' build.config.msm.waipio build.config.msm.gki > preflight/waipio-build-config-evidence.txt
 
       - name: Verify source is not contaminated by Arter build metadata
         shell: bash
         run: |
           set -euo pipefail
           echo "Kernel Makefile version: $(awk '/^VERSION =/{v=$3} /^PATCHLEVEL =/{p=$3} /^SUBLEVEL =/{s=$3} END{print v "." p "." s}' Makefile)"
-          if grep -R -n --include='*defconfig' --include='*.yml' --include='*.yaml' 'arter97 r45b2\|CONFIG_LOCALVERSION="-arter97"' arch/arm64/configs .github 2>/dev/null; then
+          if grep -R -n --include='*defconfig' --include='*.config' --include='*.yml' --include='*.yaml' 'arter97 r45b2\|CONFIG_LOCALVERSION="-arter97"' arch/arm64/configs .github 2>/dev/null; then
             echo "::warning::Arter-derived metadata found in configuration/workflows; review before porting features."
           else
-            echo "No obvious Arter build metadata found in defconfigs/workflows."
+            echo "No obvious Arter build metadata found in configs/workflows."
           fi
 
       - name: Upload preflight report
